@@ -1,0 +1,48 @@
+# Local development only — app + PostgreSQL with source hot reload.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: incident
+      POSTGRES_PASSWORD: incident
+      POSTGRES_DB: incident_commander
+    # Not published to host — app reaches db via Docker network. Use:
+    #   docker compose exec db psql -U incident -d incident_commander
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incident -d incident_commander"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://incident:incident@db:5432/incident_commander
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./alembic:/app/alembic
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      [
+        "uvicorn",
+        "ai_incident_commander.server.main:api",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+
+volumes:
+  postgres_data:
