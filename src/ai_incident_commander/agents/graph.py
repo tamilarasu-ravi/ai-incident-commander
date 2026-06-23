@@ -37,10 +37,14 @@ def build_investigation_graph(settings: Settings | None = None) -> StateGraph:
         """Wrapper binding settings into the synthesize node."""
         return await synthesize_rca(state, settings=resolved)
 
+    async def run_evals_node(state: InvestigationState) -> InvestigationState:
+        """Wrapper binding settings into the evaluation node."""
+        return await run_evals(state, settings=resolved)
+
     graph = StateGraph(InvestigationState)
     graph.add_node("collect_evidence", collect_evidence_node)
     graph.add_node("synthesize_rca", synthesize_rca_node)
-    graph.add_node("run_evals", run_evals)
+    graph.add_node("run_evals", run_evals_node)
     graph.add_node("surface_rca", surface_rca)
     graph.add_node("block", block_investigation)
 

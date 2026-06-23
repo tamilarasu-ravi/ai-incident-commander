@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from ai_incident_commander.config import Settings, get_settings
 from ai_incident_commander.models.evidence import EvidenceBundle
+from ai_incident_commander.models.grounding import GroundingVerdict
 from ai_incident_commander.models.rca import RcaHypothesis
 
 logger = structlog.get_logger(__name__)
@@ -140,3 +141,62 @@ async def synthesize_rca_hypothesis(
 
     log.info("rca_synthesis_completed", root_cause=hypothesis.root_cause_candidate)
     return hypothesis
+
+
+async def validate_rca_grounding(
+    evidence: EvidenceBundle,
+    rca: RcaHypothesis,
+    settings: Settings | None = None,
+) -> GroundingVerdict:
+    """
+    Validate whether an RCA hypothesis is grounded in raw evidence.
+
+    Args:
+        evidence: Evidence bundle shown to the validator (RCA excluded).
+        rca: RCA hypothesis to validate.
+        settings: Optional settings override for LLM configuration.
+
+    Returns:
+        Grounding verdict with binary grounding score.
+
+    Raises:
+        ValueError: If no LLM provider is configured.
+        Exception: Propagates LLM provider errors after logging context.
+    """
+    llm = build_llm(settings)
+    structured_llm = llm.with_structured_output(GroundingVerdict)
+    system_prompt = load_prompt("grounding_validator.md")
+    user_content = (
+        f"Proposed RCA:\n{rca.model_dump_json(indent=2)}\n\n"
+        f"Evidence JSON:\n{_format_evidence_for_prompt(evidence)}"
+    )
+
+    log = logger.bind(service=rca.affected_service)
+    log.info("grounding_validation_started")
+
+    try:
+        result = await structured_llm.ainvoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content),
+            ]
+        )
+    except Exception as error:
+        log.error("grounding_validation_failed", error=str(error))
+        raise
+
+    if not isinstance(result, GroundingVerdict):
+        verdict = GroundingVerdict.model_validate(result)
+    else:
+        verdict = result
+
+    normalized_score = 1.0 if verdict.grounded else 0.0
+    if verdict.grounding_score != normalized_score:
+        verdict = verdict.model_copy(update={"grounding_score": normalized_score})
+
+    log.info(
+        "grounding_validation_completed",
+        grounded=verdict.grounded,
+        score=verdict.grounding_score,
+    )
+    return verdict

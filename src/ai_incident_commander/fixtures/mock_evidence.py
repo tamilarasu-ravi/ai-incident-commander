@@ -10,6 +10,8 @@ from ai_incident_commander.models.evidence import (
 )
 
 DEMO_SERVICE_NAME = "checkout-service"
+NULL_DEPLOY_SERVICE_NAME = "payment-service"
+FLAKY_TEST_SERVICE_NAME = "auth-service"
 
 REDIS_POOL_EXHAUSTION_BUNDLE = EvidenceBundle(
     commits=[
@@ -73,11 +75,57 @@ REDIS_POOL_EXHAUSTION_BUNDLE = EvidenceBundle(
     ],
 )
 
+NULL_DEPLOY_BUNDLE = EvidenceBundle(
+    commits=[
+        CommitEvidence(
+            sha="null01",
+            message="chore: empty deploy artifact for payment-service",
+            author="dev@example.com",
+            age_minutes=22,
+        ),
+        CommitEvidence(
+            sha="null02",
+            message="ci: retry failed payment-service pipeline",
+            author="dev@example.com",
+            age_minutes=40,
+        ),
+    ],
+)
+
+FLAKY_TEST_BUNDLE = EvidenceBundle(
+    commits=[
+        CommitEvidence(
+            sha="flk001",
+            message="test: mark auth integration suite as flaky",
+            author="dev@example.com",
+            age_minutes=30,
+        ),
+    ],
+    log_clusters=[
+        LogClusterEvidence(
+            message="auth-service integration test failed: expected 200 got 500",
+            count=12,
+            service=FLAKY_TEST_SERVICE_NAME,
+        ),
+        LogClusterEvidence(
+            message="auth-service test retry passed on second attempt",
+            count=11,
+            service=FLAKY_TEST_SERVICE_NAME,
+        ),
+    ],
+)
+
 REDIS_POOL_STUB_EVAL = EvalResult.from_component_scores(
     evidence_coverage=0.85,
     grounding_score=0.85,
     consistency=0.95,
 )
+
+_FIXTURES_BY_SERVICE = {
+    DEMO_SERVICE_NAME: REDIS_POOL_EXHAUSTION_BUNDLE,
+    NULL_DEPLOY_SERVICE_NAME: NULL_DEPLOY_BUNDLE,
+    FLAKY_TEST_SERVICE_NAME: FLAKY_TEST_BUNDLE,
+}
 
 
 def get_fixture_evidence(service: str) -> EvidenceBundle | None:
@@ -90,9 +138,7 @@ def get_fixture_evidence(service: str) -> EvidenceBundle | None:
     Returns:
         ``EvidenceBundle`` when a fixture exists, otherwise ``None``.
     """
-    if service.strip().lower() == DEMO_SERVICE_NAME:
-        return REDIS_POOL_EXHAUSTION_BUNDLE
-    return None
+    return _FIXTURES_BY_SERVICE.get(service.strip().lower())
 
 
 def get_stub_eval_result(service: str) -> EvalResult | None:

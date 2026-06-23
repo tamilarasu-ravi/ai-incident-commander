@@ -1,8 +1,7 @@
 """LangGraph node implementations for the investigation pipeline."""
 
+from ai_incident_commander.agents.evaluator import run_evaluation_engine
 from ai_incident_commander.config import Settings, get_settings
-from ai_incident_commander.constants import EVIDENCE_COVERAGE_THRESHOLD
-from ai_incident_commander.fixtures.mock_evidence import get_stub_eval_result
 from ai_incident_commander.integrations.collector import collect_live_evidence
 from ai_incident_commander.llm.adapter import synthesize_rca_hypothesis
 from ai_incident_commander.models.investigation import InvestigationState
@@ -81,53 +80,45 @@ async def synthesize_rca(state: InvestigationState, settings: Settings | None = 
     }
 
 
-async def run_evals(state: InvestigationState) -> InvestigationState:
+async def run_evals(state: InvestigationState, settings: Settings | None = None) -> InvestigationState:
     """
-    Apply stub evaluation scores for Day 2 (full eval engine on Day 5).
+    Run the three-stage evaluation engine before surfacing an RCA.
 
     Args:
-        state: Current investigation state with ``rca`` populated.
+        state: Current investigation state with ``evidence`` and ``rca`` populated.
+        settings: Optional settings override for LLM-backed evals.
 
     Returns:
         Updated state with ``eval_result`` and routing metadata.
 
     Raises:
-        ValueError: If RCA is missing from state.
+        ValueError: If evidence or RCA is missing from state.
     """
-    if state.get("rca") is None:
-        raise ValueError("synthesize_rca must run before run_evals")
+    evidence = state.get("evidence")
+    rca = state.get("rca")
+    if evidence is None or rca is None:
+        raise ValueError("collect_evidence and synthesize_rca must run before run_evals")
 
-    stub_eval = get_stub_eval_result(state["service"])
-    if stub_eval is None:
-        return {
-            **state,
-            "status": "error",
-            "error_message": f"No stub eval fixture for service '{state['service']}'.",
-        }
-
-    blocked = stub_eval.evidence_coverage < EVIDENCE_COVERAGE_THRESHOLD
-    block_reason = ""
-    if blocked:
-        block_reason = (
-            f"Evidence coverage {stub_eval.evidence_coverage:.0%} is below "
-            f"{EVIDENCE_COVERAGE_THRESHOLD:.0%} threshold."
-        )
-
-    eval_result = stub_eval.model_copy(
-        update={"blocked": blocked, "block_reason": block_reason},
+    resolved = settings or get_settings()
+    eval_result = await run_evaluation_engine(
+        evidence=evidence,
+        rca=rca,
+        service=state["service"],
+        description=state["description"],
+        settings=resolved,
     )
 
     return {
         **state,
         "eval_result": eval_result,
         "status": "evaluating",
-        "block_reason": block_reason if blocked else None,
+        "block_reason": eval_result.block_reason if eval_result.blocked else None,
     }
 
 
 def route_after_evals(state: InvestigationState) -> str:
     """
-    Route to block or surface based on stub eval outcome.
+    Route to block or surface based on evaluation outcome.
 
     Args:
         state: Investigation state after ``run_evals``.

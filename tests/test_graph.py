@@ -6,6 +6,8 @@ import pytest
 
 from ai_incident_commander.agents.graph import build_investigation_graph, run_investigation
 from ai_incident_commander.config import Settings
+from ai_incident_commander.models.eval_result import compute_confidence
+from ai_incident_commander.models.grounding import GroundingVerdict
 from ai_incident_commander.models.rca import RcaHypothesis
 from tests.fixtures import DEMO_SERVICE_NAME
 
@@ -41,6 +43,20 @@ async def test_run_investigation_surfaces_rca_for_demo_service(
         "ai_incident_commander.agents.investigation.synthesize_rca_hypothesis",
         AsyncMock(return_value=mock_rca_hypothesis),
     )
+    monkeypatch.setattr(
+        "ai_incident_commander.agents.evaluator.check_grounding",
+        AsyncMock(
+            return_value=GroundingVerdict(
+                grounded=True,
+                grounding_score=1.0,
+                citation="Redis connection pool exhausted",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "ai_incident_commander.agents.evaluator.score_consistency",
+        AsyncMock(return_value=0.95),
+    )
 
     final_state = await run_investigation(
         service=DEMO_SERVICE_NAME,
@@ -51,7 +67,9 @@ async def test_run_investigation_surfaces_rca_for_demo_service(
     assert final_state["status"] == "surfaced"
     assert final_state["rca"] == mock_rca_hypothesis
     assert final_state["eval_result"] is not None
-    assert final_state["eval_result"].confidence == pytest.approx(0.87)
+    assert final_state["eval_result"].confidence == pytest.approx(
+        compute_confidence(1.0, 1.0, 0.95)
+    )
     assert final_state["investigation_id"]
 
 

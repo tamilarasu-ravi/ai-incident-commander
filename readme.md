@@ -18,7 +18,7 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 - [x] **Day 2:** LangGraph investigation pipeline end-to-end (mock evidence)
 - [x] **Day 3:** GitHub + Datadog integration clients live
 - [x] **Day 4:** Jira + Real-Time Search API live
-- [ ] **Day 5:** Full eval engine; all three test scenarios passing (`pytest`)
+- [x] **Day 5:** Full eval engine; all three test scenarios passing (`pytest`)
 - [ ] **Day 6:** PagerDuty webhook + Block Kit approval actions
 - [ ] **Day 7:** Demo video recorded; judge sandbox access granted
 
