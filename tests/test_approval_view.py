@@ -2,7 +2,6 @@
 
 import pytest
 
-from ai_incident_commander.models.eval_result import EvalResult
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.models.rca import RcaHypothesis
 from ai_incident_commander.slack.views.approval import (
@@ -10,6 +9,7 @@ from ai_incident_commander.slack.views.approval import (
     ACTION_REJECT,
     ACTION_SHOW_EVIDENCE,
     build_blocked_message_text,
+    build_evidence_detail_text,
     build_evidence_summary,
     build_rca_approval_blocks,
 )
@@ -62,6 +62,14 @@ def test_build_rca_approval_blocks_shows_confidence(surfaced_state: Investigatio
     )
     assert "87%" in section_text
     assert "Redis connection pool exhaustion" in section_text
+
+
+def test_build_evidence_detail_text_lists_evidence(surfaced_state: InvestigationState) -> None:
+    """Expanded evidence view includes commits and log clusters."""
+    text = build_evidence_detail_text(surfaced_state)
+    assert "abc123" in text
+    assert "SCRUM-1" in text
+    assert "Redis connection pool exhausted" in text
 
 
 def test_build_blocked_message_text_includes_reason() -> None:

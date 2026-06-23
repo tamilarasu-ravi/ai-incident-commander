@@ -32,6 +32,7 @@ def make_settings():
             "jira_base_url": "",
             "jira_email": "",
             "jira_project_key": "SCRUM",
+            "jira_issue_type": "Task",
             "datadog_api_key": "",
             "datadog_app_key": "",
             "datadog_site": "datadoghq.com",
@@ -43,3 +44,14 @@ def make_settings():
         return Settings.model_construct(**base)
 
     return _make_settings
+
+
+@pytest.fixture(autouse=True)
+def clear_investigation_store():
+    """Isolate investigation store state between tests."""
+    from ai_incident_commander.store.investigations import get_investigation_store
+
+    store = get_investigation_store()
+    store.clear()
+    yield
+    store.clear()

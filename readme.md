@@ -19,7 +19,7 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 - [x] **Day 3:** GitHub + Datadog integration clients live
 - [x] **Day 4:** Jira + Real-Time Search API live
 - [x] **Day 5:** Full eval engine; all three test scenarios passing (`pytest`)
-- [ ] **Day 6:** PagerDuty webhook + Block Kit approval actions
+- [x] **Day 6:** PagerDuty webhook + Block Kit approval actions
 - [ ] **Day 7:** Demo video recorded; judge sandbox access granted
 
 ---

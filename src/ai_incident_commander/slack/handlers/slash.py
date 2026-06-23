@@ -1,25 +1,18 @@
 """Slash command handlers for incident escalation."""
 
-import asyncio
 import threading
 
 from slack_bolt import App
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-from ai_incident_commander.agents.graph import run_investigation
 from ai_incident_commander.config import Settings
 from ai_incident_commander.constants import (
     INCIDENT_SLASH_COMMAND,
     INCIDENT_USAGE_HINT,
     INVESTIGATION_ANNOUNCEMENT_TEMPLATE,
 )
-from ai_incident_commander.slack.views.approval import (
-    build_blocked_message_text,
-    build_error_message_text,
-    build_rca_approval_blocks,
-    build_rca_fallback_text,
-)
+from ai_incident_commander.slack.investigation_runner import post_investigation_result
 
 
 class IncidentCommandParseError(ValueError):
@@ -95,49 +88,12 @@ def _post_investigation_result(
         description: Incident description.
         settings: Application settings for LLM configuration.
     """
-    try:
-        final_state = asyncio.run(
-            run_investigation(service=service, description=description, settings=settings)
-        )
-    except Exception:
-        client.chat_postMessage(
-            channel=channel_id,
-            text=(
-                f":warning: Investigation failed for `{service}`. "
-                "Check application logs for details."
-            ),
-        )
-        return
-
-    status = final_state.get("status")
-    if status == "error":
-        client.chat_postMessage(
-            channel=channel_id,
-            text=build_error_message_text(final_state),
-        )
-        return
-
-    if status == "blocked":
-        client.chat_postMessage(
-            channel=channel_id,
-            text=build_blocked_message_text(final_state),
-        )
-        return
-
-    if status == "surfaced":
-        client.chat_postMessage(
-            channel=channel_id,
-            text=build_rca_fallback_text(final_state),
-            blocks=build_rca_approval_blocks(final_state),
-        )
-        return
-
-    client.chat_postMessage(
-        channel=channel_id,
-        text=(
-            f":warning: Investigation for `{service}` ended in unexpected "
-            f"status `{status}`."
-        ),
+    post_investigation_result(
+        client=client,
+        channel_id=channel_id,
+        service=service,
+        description=description,
+        settings=settings,
     )
 
 

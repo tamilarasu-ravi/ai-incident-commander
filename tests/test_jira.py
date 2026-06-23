@@ -6,6 +6,10 @@ import pytest
 
 from ai_incident_commander.config import Settings
 from ai_incident_commander.integrations.jira import JiraClient, JiraClientError
+from ai_incident_commander.models.eval_result import EvalResult
+from ai_incident_commander.models.investigation import InvestigationState
+from ai_incident_commander.models.rca import RcaHypothesis
+from tests.fixtures import REDIS_POOL_EXHAUSTION_BUNDLE
 
 
 @pytest.fixture
@@ -83,3 +87,39 @@ async def test_get_prior_incidents_raises_on_api_error(jira_settings: Settings) 
     with patch("ai_incident_commander.integrations.jira.httpx.AsyncClient", return_value=mock_http):
         with pytest.raises(JiraClientError):
             await JiraClient(jira_settings).get_prior_incidents("checkout-service")
+
+
+async def test_create_incident_ticket_returns_issue_key(jira_settings: Settings) -> None:
+    """Create issue API returns the new Jira issue key."""
+    mock_response = MagicMock()
+    mock_response.status_code = 201
+    mock_response.json.return_value = {"key": "SCRUM-42"}
+
+    mock_http = AsyncMock()
+    mock_http.post.return_value = mock_response
+    mock_http.__aenter__.return_value = mock_http
+    mock_http.__aexit__.return_value = None
+
+    state = InvestigationState(
+        investigation_id="inv-123",
+        service="checkout-service",
+        description="latency spike",
+        evidence=REDIS_POOL_EXHAUSTION_BUNDLE,
+        rca=RcaHypothesis(
+            root_cause_candidate="Redis connection pool exhaustion",
+            supporting_commit="abc123",
+            commit_age_minutes=14,
+            affected_service="checkout-service",
+            prior_incident_match="SCRUM-1",
+        ),
+        eval_result=EvalResult.from_component_scores(1.0, 1.0, 0.95),
+        status="surfaced",
+    )
+
+    with patch("ai_incident_commander.integrations.jira.httpx.AsyncClient", return_value=mock_http):
+        issue_key = await JiraClient(jira_settings).create_incident_ticket(state)
+
+    assert issue_key == "SCRUM-42"
+    request_json = mock_http.post.call_args.kwargs["json"]
+    assert request_json["fields"]["project"]["key"] == "SCRUM"
+    assert "Redis connection pool exhaustion" in request_json["fields"]["summary"]

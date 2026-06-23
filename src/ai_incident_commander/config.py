@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     jira_base_url: str = Field(default="", validation_alias="JIRA_BASE_URL")
     jira_email: str = Field(default="", validation_alias="JIRA_EMAIL")
     jira_project_key: str = Field(default="SCRUM", validation_alias="JIRA_PROJECT_KEY")
+    jira_issue_type: str = Field(default="Task", validation_alias="JIRA_ISSUE_TYPE")
 
     datadog_api_key: str = Field(default="", validation_alias="DATADOG_API_KEY")
     datadog_app_key: str = Field(default="", validation_alias="DATADOG_APP_KEY")

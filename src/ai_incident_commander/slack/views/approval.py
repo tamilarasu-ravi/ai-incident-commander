@@ -220,6 +220,106 @@ def _build_card_blocks(
     return blocks
 
 
+def build_evidence_detail_text(state: InvestigationState) -> str:
+    """
+    Build an expanded evidence dump for ephemeral Slack display.
+
+    Args:
+        state: Investigation state with evidence populated.
+
+    Returns:
+        Slack mrkdwn evidence detail message.
+
+    Raises:
+        ValueError: If evidence is missing from state.
+    """
+    evidence = state.get("evidence")
+    if evidence is None:
+        raise ValueError("show evidence requires collected evidence")
+
+    lines = [f"*Evidence for `{state['service']}`*"]
+    lines.append("*Commits*")
+    for commit in evidence.commits:
+        lines.append(f"• `{commit.sha}` — {commit.message} ({commit.age_minutes} min ago)")
+
+    lines.append("*Log Clusters*")
+    for cluster in evidence.log_clusters:
+        lines.append(f"• [{cluster.count}x] {cluster.message}")
+
+    lines.append("*Prior Incidents*")
+    if evidence.prior_incidents:
+        for incident in evidence.prior_incidents:
+            lines.append(f"• `{incident.incident_id}` — {incident.summary}")
+    else:
+        lines.append("• none")
+
+    lines.append("*Deployments*")
+    if evidence.deployments:
+        for deployment in evidence.deployments:
+            lines.append(
+                f"• `{deployment.deployment_id}` — {deployment.environment} "
+                f"({deployment.deployed_at_minutes_ago} min ago)"
+            )
+    else:
+        lines.append("• none")
+
+    return "\n".join(lines)
+
+
+def build_rca_resolved_blocks(
+    state: InvestigationState,
+    *,
+    resolution: str,
+    actor_id: str,
+    jira_issue_key: str | None = None,
+    jira_base_url: str = "",
+) -> list[dict[str, Any]]:
+    """
+    Build updated RCA card blocks after approve or reject actions.
+
+    Args:
+        state: Original surfaced investigation state.
+        resolution: Human-readable resolution label.
+        actor_id: Slack user ID who took the action.
+        jira_issue_key: Optional created Jira issue key after approval.
+        jira_base_url: Jira base URL for browse links.
+
+    Returns:
+        Block Kit blocks without action buttons.
+    """
+    rca = state.get("rca")
+    evidence = state.get("evidence")
+    eval_result = state.get("eval_result")
+    if rca is None or evidence is None or eval_result is None:
+        raise ValueError("resolved cards require rca, evidence, and eval_result")
+
+    blocks = _build_card_blocks(
+        investigation_id=state.get("investigation_id", ""),
+        service=state["service"],
+        description=state["description"],
+        rca=rca,
+        evidence=evidence,
+        eval_result=eval_result,
+    )
+    blocks = [block for block in blocks if block.get("type") != "actions"]
+
+    resolution_text = f"*Resolution:* {resolution} by <@{actor_id}>"
+    if jira_issue_key and jira_base_url:
+        resolution_text += (
+            f"\n*Jira:* <{jira_base_url}/browse/{jira_issue_key}|{jira_issue_key}>"
+        )
+    elif jira_issue_key:
+        resolution_text += f"\n*Jira:* `{jira_issue_key}`"
+
+    blocks.append(
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": resolution_text},
+        }
+    )
+    return blocks
+
+
 def build_rca_fallback_text(state: InvestigationState) -> str:
     """
     Build fallback notification text for Slack clients without blocks.

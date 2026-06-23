@@ -9,6 +9,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from ai_incident_commander.config import Settings, get_settings
 from ai_incident_commander.slack.client import create_slack_web_client
+from ai_incident_commander.slack.handlers.actions import register_action_handlers
 from ai_incident_commander.slack.handlers.slash import register_slash_handlers
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ def create_slack_app(settings: Settings | None = None) -> App:
         signing_secret=resolved.slack_signing_secret or None,
     )
     register_slash_handlers(app, resolved)
+    register_action_handlers(app, resolved)
     return app
 
 

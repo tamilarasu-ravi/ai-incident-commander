@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from ai_incident_commander.server.routes.pagerduty import router as pagerduty_router
 from ai_incident_commander.slack.app import start_socket_mode, stop_socket_mode
 
 
@@ -29,6 +30,7 @@ api = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+api.include_router(pagerduty_router)
 
 
 @api.get("/health")
