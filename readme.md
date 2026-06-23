@@ -15,7 +15,7 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 ## Build Status (7-day ship)
 
 - [x] **Day 1:** Bolt app running in Slack sandbox (Socket Mode or HTTP events)
-- [ ] **Day 2:** LangGraph investigation pipeline end-to-end (mock evidence)
+- [x] **Day 2:** LangGraph investigation pipeline end-to-end (mock evidence)
 - [ ] **Day 3:** GitHub + Datadog integration clients live
 - [ ] **Day 4:** Jira + Real-Time Search API live
 - [ ] **Day 5:** Full eval engine; all three test scenarios passing (`pytest`)

@@ -8,6 +8,7 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from ai_incident_commander.config import Settings, get_settings
+from ai_incident_commander.slack.client import create_slack_web_client
 from ai_incident_commander.slack.handlers.slash import register_slash_handlers
 
 if TYPE_CHECKING:
@@ -34,8 +35,9 @@ def create_slack_app(settings: Settings | None = None) -> App:
     if not resolved.slack_bot_token:
         raise ValueError("SLACK_BOT_TOKEN is required to create the Slack app")
 
+    client = create_slack_web_client(resolved.slack_bot_token)
     app = App(
-        token=resolved.slack_bot_token,
+        client=client,
         signing_secret=resolved.slack_signing_secret or None,
     )
     register_slash_handlers(app, resolved)
