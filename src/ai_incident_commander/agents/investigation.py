@@ -13,22 +13,27 @@ async def collect_evidence(
     settings: Settings | None = None,
 ) -> InvestigationState:
     """
-    Collect evidence from GitHub and Datadog in parallel (Day 3).
+    Collect evidence from GitHub, Datadog, Jira, and Slack RTS in parallel.
 
-    Prior incidents and deployments remain fixture-backed until Day 4.
+    Deployments remain fixture-backed until a deployment source is added.
 
     Args:
-        state: Current investigation state with ``service`` set.
+        state: Current investigation state with ``service`` and ``description`` set.
         settings: Optional settings override for integration credentials.
 
     Returns:
         Updated state with ``evidence`` populated or ``error`` status on failure.
     """
     service = state["service"]
+    description = state["description"]
     resolved = settings or get_settings()
 
     try:
-        evidence = await collect_live_evidence(service=service, settings=resolved)
+        evidence = await collect_live_evidence(
+            service=service,
+            description=description,
+            settings=resolved,
+        )
     except ValueError as error:
         return {
             **state,

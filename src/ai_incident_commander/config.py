@@ -64,6 +64,11 @@ class Settings(BaseSettings):
         return bool(self.datadog_api_key and self.datadog_app_key)
 
     @property
+    def is_jira_configured(self) -> bool:
+        """Return True when Jira API token, email, and base URL are set."""
+        return bool(self.jira_api_token and self.jira_email and self.jira_base_url)
+
+    @property
     def is_slack_socket_mode_ready(self) -> bool:
         """Return True when Socket Mode can be started with the configured tokens."""
         return bool(self.slack_bot_token and self.slack_app_token)
