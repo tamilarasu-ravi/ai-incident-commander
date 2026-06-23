@@ -11,9 +11,9 @@ from tests.fixtures import DEMO_SERVICE_NAME
 
 
 @pytest.fixture
-def test_settings() -> Settings:
+def test_settings(make_settings):
     """Minimal settings for graph tests without real API keys."""
-    return Settings(
+    return make_settings(
         openai_api_key="test-openai-key",
         google_api_key="test-google-key",
     )
@@ -67,7 +67,7 @@ async def test_run_investigation_errors_for_unknown_service(
 
     assert final_state["status"] == "error"
     assert final_state.get("error_message")
-    assert "No mock evidence fixture" in final_state["error_message"]
+    assert "No evidence collected" in final_state["error_message"]
 
 
 async def test_graph_builds_without_error(test_settings: Settings) -> None:

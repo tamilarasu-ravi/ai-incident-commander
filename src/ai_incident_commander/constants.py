@@ -13,3 +13,6 @@ INCIDENT_USAGE_HINT = "/incident <service> <description>"
 INVESTIGATION_ANNOUNCEMENT_TEMPLATE = (
     ":mag: Investigating *{service}* — {description}"
 )
+
+EVIDENCE_LOOKBACK_HOURS = 2
+INTEGRATION_FETCH_TIMEOUT_SECONDS = 30

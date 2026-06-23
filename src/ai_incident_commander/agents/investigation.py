@@ -2,34 +2,38 @@
 
 from ai_incident_commander.config import Settings, get_settings
 from ai_incident_commander.constants import EVIDENCE_COVERAGE_THRESHOLD
-from ai_incident_commander.fixtures.mock_evidence import (
-    get_fixture_evidence,
-    get_stub_eval_result,
-)
+from ai_incident_commander.fixtures.mock_evidence import get_stub_eval_result
+from ai_incident_commander.integrations.collector import collect_live_evidence
 from ai_incident_commander.llm.adapter import synthesize_rca_hypothesis
 from ai_incident_commander.models.investigation import InvestigationState
 
 
-async def collect_evidence(state: InvestigationState) -> InvestigationState:
+async def collect_evidence(
+    state: InvestigationState,
+    settings: Settings | None = None,
+) -> InvestigationState:
     """
-    Load mock evidence for known demo services (Day 2 stub).
+    Collect evidence from GitHub and Datadog in parallel (Day 3).
+
+    Prior incidents and deployments remain fixture-backed until Day 4.
 
     Args:
         state: Current investigation state with ``service`` set.
+        settings: Optional settings override for integration credentials.
 
     Returns:
-        Updated state with ``evidence`` populated or ``error`` status on miss.
+        Updated state with ``evidence`` populated or ``error`` status on failure.
     """
     service = state["service"]
-    evidence = get_fixture_evidence(service)
-    if evidence is None:
+    resolved = settings or get_settings()
+
+    try:
+        evidence = await collect_live_evidence(service=service, settings=resolved)
+    except ValueError as error:
         return {
             **state,
             "status": "error",
-            "error_message": (
-                f"No mock evidence fixture for service '{service}'. "
-                "Use checkout-service for the Day 2 demo path."
-            ),
+            "error_message": str(error),
         }
 
     return {

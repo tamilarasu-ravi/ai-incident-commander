@@ -32,7 +32,36 @@ class Settings(BaseSettings):
 
     database_url: str = Field(default="", validation_alias="DATABASE_URL")
 
+    github_token: str = Field(default="", validation_alias="GITHUB_TOKEN")
+    github_repo_owner: str = Field(default="", validation_alias="GITHUB_REPO_OWNER")
+    github_repo_name: str = Field(default="", validation_alias="GITHUB_REPO_NAME")
+
+    jira_api_token: str = Field(default="", validation_alias="JIRA_API_TOKEN")
+    jira_base_url: str = Field(default="", validation_alias="JIRA_BASE_URL")
+    jira_email: str = Field(default="", validation_alias="JIRA_EMAIL")
+    jira_project_key: str = Field(default="SCRUM", validation_alias="JIRA_PROJECT_KEY")
+
+    datadog_api_key: str = Field(default="", validation_alias="DATADOG_API_KEY")
+    datadog_app_key: str = Field(default="", validation_alias="DATADOG_APP_KEY")
+    datadog_site: str = Field(default="datadoghq.com", validation_alias="DATADOG_SITE")
+    datadog_log_index: str = Field(default="main", validation_alias="DATADOG_LOG_INDEX")
+
+    evidence_lookback_hours: int = Field(
+        default=2,
+        validation_alias="EVIDENCE_LOOKBACK_HOURS",
+    )
+
     log_level: str = Field(default="info", validation_alias="LOG_LEVEL")
+
+    @property
+    def is_github_configured(self) -> bool:
+        """Return True when GitHub token and repository coordinates are set."""
+        return bool(self.github_token and self.github_repo_owner and self.github_repo_name)
+
+    @property
+    def is_datadog_configured(self) -> bool:
+        """Return True when Datadog API and application keys are set."""
+        return bool(self.datadog_api_key and self.datadog_app_key)
 
     @property
     def is_slack_socket_mode_ready(self) -> bool:
