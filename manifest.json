@@ -25,6 +25,8 @@
         "channels:read",
         "chat:write",
         "commands",
+        "groups:history",
+        "groups:read",
         "assistant:read",
         "search:read.public"
       ]

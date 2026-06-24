@@ -36,6 +36,66 @@ class RtsClientError(Exception):
     """Raised when Slack search APIs return an error response."""
 
 
+def _is_missing_scope_error(error: SlackApiError | RtsClientError) -> bool:
+    """
+    Return True when Slack rejected a call due to missing OAuth scopes.
+
+    Args:
+        error: Slack API or RTS client error.
+
+    Returns:
+        True when the workspace token lacks required bot scopes.
+    """
+    if isinstance(error, SlackApiError):
+        payload = error.response or {}
+        if payload.get("error") == "missing_scope":
+            return True
+        needed = payload.get("needed", "")
+        return isinstance(needed, str) and "history" in needed
+    return str(error) == "missing_scope"
+
+
+def _is_invalid_action_token_error(error: SlackApiError | RtsClientError) -> bool:
+    """
+    Return True when RTS was called without a valid Slack action token.
+
+    Bot tokens require an ``action_token`` from message/app_mention events.
+
+    Args:
+        error: Slack API or RTS client error.
+
+    Returns:
+        True when ``assistant.search.context`` rejected the token.
+    """
+    if isinstance(error, SlackApiError):
+        payload = error.response or {}
+        return payload.get("error") == "invalid_action_token"
+    return str(error) == "invalid_action_token"
+
+
+def _missing_scope_hint(error: SlackApiError | RtsClientError) -> str:
+    """
+    Build a reinstall hint from a Slack missing_scope response.
+
+    Args:
+        error: Slack API or RTS client error.
+
+    Returns:
+        Human-readable scope guidance for operators.
+    """
+    if isinstance(error, SlackApiError):
+        needed = (error.response or {}).get("needed", "")
+        if needed:
+            return (
+                f"Reinstall the Slack app with scopes: {needed}. "
+                "Update from manifest.json at api.slack.com → OAuth & Permissions → Reinstall."
+            )
+    return (
+        "Reinstall the Slack app after adding history scopes from manifest.json "
+        "(channels:history for public #incidents, groups:history if private)."
+    )
+
+
 class RtsClient:
     """Search Slack incident channel history for prior incident references."""
 
@@ -61,17 +121,20 @@ class RtsClient:
         service: str,
         description: str,
         limit: int = 5,
+        action_token: str | None = None,
     ) -> list[PriorIncidentEvidence]:
         """
         Search Slack for prior incident context related to the service and alert.
 
-        Tries ``assistant.search.context`` first, then falls back to
-        ``conversations.history`` scoped to the incidents channel.
+        Uses ``conversations.history`` on the incidents channel for bot-token
+        background investigations. ``assistant.search.context`` is only called
+        when an ``action_token`` from a Slack message event is supplied.
 
         Args:
             service: Affected service name.
             description: Free-text incident description for keyword matching.
             limit: Maximum number of prior incidents to return.
+            action_token: Optional RTS action token from a Slack message event.
 
         Returns:
             Deduplicated list of ``PriorIncidentEvidence`` parsed from messages.
@@ -86,24 +149,55 @@ class RtsClient:
         log = logger.bind(service=service, channel_id=self._channel_id)
         log.info("rts_search_started", query=query)
 
-        try:
-            results = await asyncio.to_thread(self._search_via_rts_api, query, service, limit)
-            if results:
-                log.info(
-                    "rts_search_completed",
-                    source="assistant.search.context",
-                    count=len(results),
+        if action_token:
+            try:
+                results = await asyncio.to_thread(
+                    self._search_via_rts_api,
+                    query,
+                    service,
+                    limit,
+                    action_token,
                 )
-                return results
-        except (SlackApiError, RtsClientError) as error:
-            log.warning("rts_api_failed", error=str(error))
+                if results:
+                    log.info(
+                        "rts_search_completed",
+                        source="assistant.search.context",
+                        count=len(results),
+                    )
+                    return results
+            except (SlackApiError, RtsClientError) as error:
+                if _is_invalid_action_token_error(error):
+                    log.info(
+                        "rts_api_skipped",
+                        reason="invalid_action_token",
+                        fallback="conversations.history",
+                    )
+                else:
+                    log.warning("rts_api_failed", error=str(error))
+        else:
+            log.info(
+                "rts_api_skipped",
+                reason="no_action_token",
+                fallback="conversations.history",
+            )
 
-        results = await asyncio.to_thread(
-            self._search_channel_history,
-            service,
-            description,
-            limit,
-        )
+        try:
+            results = await asyncio.to_thread(
+                self._search_channel_history,
+                service,
+                description,
+                limit,
+            )
+        except (SlackApiError, RtsClientError) as error:
+            if _is_missing_scope_error(error):
+                log.warning(
+                    "rts_history_missing_scope",
+                    error=str(error),
+                    hint=_missing_scope_hint(error),
+                )
+                return []
+            raise
+
         log.info("rts_search_completed", source="conversations.history", count=len(results))
         return results
 
@@ -118,6 +212,7 @@ class RtsClient:
         query: str,
         service: str,
         limit: int,
+        action_token: str,
     ) -> list[PriorIncidentEvidence]:
         """
         Search Slack via the Real-Time Search API.
@@ -126,6 +221,7 @@ class RtsClient:
             query: RTS query string.
             service: Affected service name for evidence mapping.
             limit: Maximum incidents to return.
+            action_token: RTS token from a Slack message or app_mention event.
 
         Returns:
             Parsed prior incidents from RTS message hits.
@@ -135,12 +231,14 @@ class RtsClient:
             SlackApiError: If the Slack API call fails.
         """
         client = self._get_client()
+        channel_types = ["public_channel", "private_channel"]
         response = client.api_call(
             api_method="assistant.search.context",
             json={
+                "action_token": action_token,
                 "query": query,
                 "context_channel_id": self._channel_id,
-                "channel_types": ["public_channel"],
+                "channel_types": channel_types,
                 "content_types": ["messages"],
                 "limit": limit,
             },
@@ -148,7 +246,8 @@ class RtsClient:
         if not response.get("ok"):
             raise RtsClientError(response.get("error", "assistant.search.context failed"))
 
-        messages = _extract_messages_from_rts_response(response.data)
+        payload = response.get("data") if isinstance(response, dict) else response.data
+        messages = _extract_messages_from_rts_response(payload or {})
         return _parse_messages_to_incidents(messages, service, limit)
 
     def _search_channel_history(
@@ -170,13 +269,22 @@ class RtsClient:
         """
         client = self._get_client()
         oldest = str((datetime.now(UTC) - timedelta(days=RTS_LOOKBACK_DAYS)).timestamp())
-        response = client.conversations_history(
-            channel=self._channel_id,
-            oldest=oldest,
-            limit=200,
-        )
+        try:
+            response = client.conversations_history(
+                channel=self._channel_id,
+                oldest=oldest,
+                limit=200,
+            )
+        except SlackApiError as error:
+            if _is_missing_scope_error(error):
+                raise RtsClientError("missing_scope") from error
+            raise
+
         if not response.get("ok"):
-            raise RtsClientError(response.get("error", "conversations.history failed"))
+            error_code = response.get("error", "conversations.history failed")
+            if error_code == "missing_scope":
+                raise RtsClientError("missing_scope")
+            raise RtsClientError(error_code)
 
         keywords = _extract_keywords(service, description)
         matched_messages: list[str] = []

@@ -94,6 +94,7 @@ async def run_evaluation_engine(
         service=service,
         description=description,
         settings=settings,
+        baseline_rca=rca,
     )
     log.info("eval_consistency_completed", score=consistency)
 

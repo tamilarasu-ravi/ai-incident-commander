@@ -9,6 +9,10 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from ai_incident_commander.config import Settings, get_settings
+from ai_incident_commander.llm.evidence_context import (
+    format_evidence_for_llm,
+    prepare_evidence_for_llm,
+)
 from ai_incident_commander.models.evidence import EvidenceBundle
 from ai_incident_commander.models.grounding import GroundingVerdict
 from ai_incident_commander.models.rca import RcaHypothesis
@@ -76,19 +80,6 @@ def build_llm(settings: Settings | None = None) -> BaseChatModel:
     return primary.with_fallbacks(models[1:])
 
 
-def _format_evidence_for_prompt(evidence: EvidenceBundle) -> str:
-    """
-    Serialize evidence into a compact JSON string for the LLM user message.
-
-    Args:
-        evidence: Collected investigation evidence.
-
-    Returns:
-        JSON string representation of the evidence bundle.
-    """
-    return evidence.model_dump_json(indent=2)
-
-
 async def synthesize_rca_hypothesis(
     evidence: EvidenceBundle,
     service: str,
@@ -114,10 +105,11 @@ async def synthesize_rca_hypothesis(
     llm = build_llm(settings)
     structured_llm = llm.with_structured_output(RcaHypothesis)
     system_prompt = load_prompt("rca_synthesis.md")
+    prepared = prepare_evidence_for_llm(evidence)
     user_content = (
         f"Service: {service}\n"
         f"Description: {description}\n\n"
-        f"Evidence JSON:\n{_format_evidence_for_prompt(evidence)}"
+        f"Evidence JSON:\n{format_evidence_for_llm(prepared, mode='full')}"
     )
 
     log = logger.bind(service=service)
@@ -166,9 +158,10 @@ async def validate_rca_grounding(
     llm = build_llm(settings)
     structured_llm = llm.with_structured_output(GroundingVerdict)
     system_prompt = load_prompt("grounding_validator.md")
+    prepared = prepare_evidence_for_llm(evidence)
     user_content = (
         f"Proposed RCA:\n{rca.model_dump_json(indent=2)}\n\n"
-        f"Evidence JSON:\n{_format_evidence_for_prompt(evidence)}"
+        f"Evidence summary:\n{format_evidence_for_llm(prepared, mode='summary')}"
     )
 
     log = logger.bind(service=rca.affected_service)

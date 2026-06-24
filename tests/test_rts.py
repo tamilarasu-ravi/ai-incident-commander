@@ -71,6 +71,62 @@ def test_parse_messages_to_incidents_extracts_scrum_ids() -> None:
     assert [incident.incident_id for incident in incidents] == ["SCRUM-1", "SCRUM-2"]
 
 
+async def test_search_incident_context_uses_channel_history_without_action_token(
+    rts_settings: Settings,
+) -> None:
+    """Background investigations use conversations.history without calling RTS."""
+    mock_client = MagicMock()
+    mock_client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "text": (
+                    "Resolved checkout-service incident SCRUM-1 — "
+                    "Redis connection pool exhausted"
+                )
+            }
+        ],
+    }
+
+    client = RtsClient(rts_settings, slack_client=mock_client)
+    incidents = await client.search_incident_context(
+        service="checkout-service",
+        description="latency spike redis pool",
+    )
+
+    assert len(incidents) == 1
+    assert incidents[0].incident_id == "SCRUM-1"
+    mock_client.api_call.assert_not_called()
+    mock_client.conversations_history.assert_called_once()
+
+
+async def test_search_incident_context_uses_rts_when_action_token_provided(
+    rts_settings: Settings,
+) -> None:
+    """RTS API is used when a Slack message action_token is available."""
+    mock_client = MagicMock()
+    mock_client.api_call.return_value = {
+        "ok": True,
+        "data": {
+            "messages": [
+                {"text": "Prior outage SCRUM-9 on checkout-service"},
+            ],
+        },
+    }
+
+    client = RtsClient(rts_settings, slack_client=mock_client)
+    incidents = await client.search_incident_context(
+        service="checkout-service",
+        description="latency spike",
+        action_token="12345.action-token",
+    )
+
+    assert len(incidents) == 1
+    assert incidents[0].incident_id == "SCRUM-9"
+    mock_client.api_call.assert_called_once()
+    mock_client.conversations_history.assert_not_called()
+
+
 async def test_search_incident_context_falls_back_to_channel_history(
     rts_settings: Settings,
 ) -> None:
@@ -93,8 +149,35 @@ async def test_search_incident_context_falls_back_to_channel_history(
     incidents = await client.search_incident_context(
         service="checkout-service",
         description="latency spike redis pool",
+        action_token="12345.action-token",
     )
 
     assert len(incidents) == 1
     assert incidents[0].incident_id == "SCRUM-1"
+    mock_client.conversations_history.assert_called_once()
+
+
+async def test_search_incident_context_returns_empty_when_history_scope_missing(
+    rts_settings: Settings,
+) -> None:
+    """Missing history scopes skip RTS fallback without failing evidence collection."""
+    mock_client = MagicMock()
+    mock_client.api_call.side_effect = SlackApiError("missing_scope", {"ok": False})
+    mock_client.conversations_history.side_effect = SlackApiError(
+        "missing_scope",
+        {
+            "ok": False,
+            "error": "missing_scope",
+            "needed": "channels:history,groups:history",
+            "provided": "chat:write,commands",
+        },
+    )
+
+    client = RtsClient(rts_settings, slack_client=mock_client)
+    incidents = await client.search_incident_context(
+        service="checkout-service",
+        description="latency spike redis pool",
+    )
+
+    assert incidents == []
     mock_client.conversations_history.assert_called_once()

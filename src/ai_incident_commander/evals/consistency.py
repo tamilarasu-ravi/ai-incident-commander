@@ -11,19 +11,33 @@ async def score_consistency(
     service: str,
     description: str,
     settings: Settings | None = None,
+    baseline_rca: RcaHypothesis | None = None,
 ) -> float:
     """
-    Run RCA synthesis twice and score root-cause consistency.
+    Score RCA consistency by comparing two synthesis runs.
+
+    When ``baseline_rca`` is provided (the graph's first synthesis at
+    ``temperature=0``), only one additional synthesis is required.
 
     Args:
         evidence: Collected investigation evidence.
         service: Affected service name.
         description: Incident description from the trigger.
         settings: Optional settings override for LLM configuration.
+        baseline_rca: RCA from the initial graph synthesis, when available.
 
     Returns:
         Consistency float in ``[0.0, 1.0]`` where ``1.0`` means identical root causes.
     """
+    if baseline_rca is not None:
+        second = await synthesize_rca_hypothesis(
+            evidence=evidence,
+            service=service,
+            description=description,
+            settings=settings,
+        )
+        return compare_root_causes(baseline_rca, second)
+
     first = await synthesize_rca_hypothesis(
         evidence=evidence,
         service=service,
