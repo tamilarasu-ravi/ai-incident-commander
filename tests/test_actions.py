@@ -62,6 +62,38 @@ def test_process_approve_creates_jira_and_updates_store(make_settings) -> None:
     client.chat_update.assert_called_once()
 
 
+def test_process_approve_rejects_duplicate_approval(make_settings) -> None:
+    """Second approve click is rejected without creating another Jira ticket."""
+    settings: Settings = make_settings(
+        jira_api_token="jira-token",
+        jira_email="you@example.com",
+        jira_base_url="https://example.atlassian.net",
+    )
+    store = get_investigation_store()
+    store.save("inv-123", _surfaced_state(), channel_id="C123", message_ts="111.222")
+    store.mark_approved("inv-123", "SCRUM-42")
+
+    client = MagicMock()
+
+    with patch(
+        "ai_incident_commander.slack.handlers.actions.JiraClient.create_incident_ticket",
+        AsyncMock(return_value="SCRUM-99"),
+    ) as jira_mock:
+        _process_approve(
+            client=client,
+            settings=settings,
+            investigation_id="inv-123",
+            actor_id="U123",
+            channel_id="C123",
+            message_ts="111.222",
+        )
+
+    jira_mock.assert_not_called()
+    client.chat_update.assert_not_called()
+    client.chat_postEphemeral.assert_called_once()
+    assert "already approved" in client.chat_postEphemeral.call_args.kwargs["text"]
+
+
 def test_process_reject_marks_investigation_rejected(make_settings) -> None:
     """Reject action marks the investigation rejected and updates the card."""
     settings: Settings = make_settings()

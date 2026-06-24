@@ -1,12 +1,12 @@
 """Shared helpers for running investigations and posting Slack results."""
 
-import asyncio
 import os
 
 import structlog
 from slack_sdk import WebClient
 
 from ai_incident_commander.agents.graph import run_investigation
+from ai_incident_commander.db.async_bridge import run_async
 from ai_incident_commander.config import Settings
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.slack.views.approval import (
@@ -59,7 +59,7 @@ def post_investigation_result(
     log.info("investigation_started")
 
     try:
-        final_state = asyncio.run(
+        final_state = run_async(
             run_investigation(service=service, description=description, settings=settings)
         )
     except Exception:

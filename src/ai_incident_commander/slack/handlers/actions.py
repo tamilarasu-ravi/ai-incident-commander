@@ -1,6 +1,5 @@
 """Block Kit action handlers for RCA approval workflow."""
 
-import asyncio
 import os
 import threading
 
@@ -10,6 +9,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.db.async_bridge import run_async
 from ai_incident_commander.integrations.jira import JiraClient, JiraClientError
 from ai_incident_commander.slack.views.approval import (
     ACTION_APPROVE,
@@ -20,6 +20,7 @@ from ai_incident_commander.slack.views.approval import (
     build_rca_resolved_blocks,
 )
 from ai_incident_commander.store.investigations import get_investigation_store
+from ai_incident_commander.store.types import StoredInvestigation
 
 logger = structlog.get_logger(__name__)
 
@@ -155,23 +156,14 @@ def _process_approve(
     message_ts: str,
 ) -> None:
     """Create a Jira ticket and update the RCA card after approval."""
-    store = get_investigation_store()
-    record = store.get(investigation_id)
-    if record is None:
-        _post_ephemeral(client, channel_id, actor_id, "Investigation not found or expired.")
-        return
-
-    if record.approval_status != "pending":
-        _post_ephemeral(
-            client,
-            channel_id,
-            actor_id,
-            f"This investigation was already {record.approval_status}.",
-        )
-        return
-
     try:
-        issue_key = asyncio.run(JiraClient(settings).create_incident_ticket(record.state))
+        record, issue_key = run_async(
+            _approve_investigation(
+                settings=settings,
+                investigation_id=investigation_id,
+                actor_id=actor_id,
+            )
+        )
     except (JiraClientError, ValueError) as error:
         _post_ephemeral(
             client,
@@ -181,7 +173,19 @@ def _process_approve(
         )
         return
 
-    store.mark_approved(investigation_id, issue_key, actor_slack_id=actor_id)
+    if record is None:
+        _post_ephemeral(client, channel_id, actor_id, "Investigation not found or expired.")
+        return
+
+    if issue_key is None:
+        _post_ephemeral(
+            client,
+            channel_id,
+            actor_id,
+            f"This investigation was already {record.approval_status}.",
+        )
+        return
+
     _update_resolved_card(
         client=client,
         settings=settings,
@@ -194,6 +198,56 @@ def _process_approve(
     )
 
 
+async def _approve_investigation(
+    settings: Settings,
+    investigation_id: str,
+    actor_id: str = "",
+) -> tuple[StoredInvestigation | None, str | None]:
+    """
+    Load, approve, and persist an investigation in one background-loop turn.
+
+    Args:
+        settings: Application settings for Jira integration.
+        investigation_id: Unique investigation identifier.
+        actor_id: Slack user ID that approved the RCA.
+
+    Returns:
+        Tuple of ``(record, issue_key)``. ``issue_key`` is ``None`` when the
+        investigation was already resolved or missing.
+    """
+    from ai_incident_commander.db import repository
+    from ai_incident_commander.db.session import session_scope
+    from ai_incident_commander.store.investigations import get_investigation_store
+    from ai_incident_commander.store.postgres_store import PostgresInvestigationStore
+
+    store = get_investigation_store()
+    if isinstance(store, PostgresInvestigationStore):
+        async with session_scope(store._database_url) as session:  # noqa: SLF001
+            record = await repository.get_investigation(session, investigation_id)
+            if record is None:
+                return None, None
+            if record.approval_status != "pending":
+                return record, None
+        issue_key = await JiraClient(settings).create_incident_ticket(record.state)
+        async with session_scope(store._database_url) as session:  # noqa: SLF001
+            updated = await repository.mark_approved(
+                session,
+                investigation_id,
+                issue_key,
+                actor_slack_id=actor_id,
+            )
+        return updated, issue_key
+
+    record = store.get(investigation_id)
+    if record is None:
+        return None, None
+    if record.approval_status != "pending":
+        return record, None
+    issue_key = await JiraClient(settings).create_incident_ticket(record.state)
+    updated = store.mark_approved(investigation_id, issue_key, actor_slack_id=actor_id)
+    return updated, issue_key
+
+
 def _process_reject(
     client: WebClient,
     settings: Settings,
@@ -203,13 +257,17 @@ def _process_reject(
     message_ts: str,
 ) -> None:
     """Mark an investigation rejected and update the RCA card."""
-    store = get_investigation_store()
-    record = store.get(investigation_id)
+    record, rejected = run_async(
+        _reject_investigation(
+            investigation_id=investigation_id,
+            actor_id=actor_id,
+        )
+    )
     if record is None:
         _post_ephemeral(client, channel_id, actor_id, "Investigation not found or expired.")
         return
 
-    if record.approval_status != "pending":
+    if not rejected:
         _post_ephemeral(
             client,
             channel_id,
@@ -218,7 +276,6 @@ def _process_reject(
         )
         return
 
-    store.mark_rejected(investigation_id, actor_slack_id=actor_id)
     _update_resolved_card(
         client=client,
         settings=settings,
@@ -228,6 +285,50 @@ def _process_reject(
         resolution="Rejected",
         actor_id=actor_id,
     )
+
+
+async def _reject_investigation(
+    investigation_id: str,
+    actor_id: str = "",
+) -> tuple[StoredInvestigation | None, bool]:
+    """
+    Load and reject an investigation in one background-loop turn.
+
+    Args:
+        investigation_id: Unique investigation identifier.
+        actor_id: Slack user ID that rejected the RCA.
+
+    Returns:
+        Tuple of ``(record, rejected_now)``. ``rejected_now`` is False when the
+        investigation was already resolved or missing.
+    """
+    from ai_incident_commander.db import repository
+    from ai_incident_commander.db.session import session_scope
+    from ai_incident_commander.store.investigations import get_investigation_store
+    from ai_incident_commander.store.postgres_store import PostgresInvestigationStore
+
+    store = get_investigation_store()
+    if isinstance(store, PostgresInvestigationStore):
+        async with session_scope(store._database_url) as session:  # noqa: SLF001
+            record = await repository.get_investigation(session, investigation_id)
+            if record is None:
+                return None, False
+            if record.approval_status != "pending":
+                return record, False
+            updated = await repository.mark_rejected(
+                session,
+                investigation_id,
+                actor_slack_id=actor_id,
+            )
+            return updated, updated is not None
+
+    record = store.get(investigation_id)
+    if record is None:
+        return None, False
+    if record.approval_status != "pending":
+        return record, False
+    updated = store.mark_rejected(investigation_id, actor_slack_id=actor_id)
+    return updated, updated is not None
 
 
 def _update_resolved_card(

@@ -1,11 +1,10 @@
 """PostgreSQL-backed investigation store."""
 
-import asyncio
-
 import structlog
 
+from ai_incident_commander.db.async_bridge import run_async
 from ai_incident_commander.db import repository
-from ai_incident_commander.db.session import dispose_database_runtime, session_scope
+from ai_incident_commander.db.session import session_scope
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.store.types import StoredInvestigation
 
@@ -18,25 +17,14 @@ class PostgresInvestigationStore:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
 
-    async def _execute(self, coroutine):
-        """Run a coroutine and always dispose DB resources before the loop closes."""
-        try:
-            return await coroutine
-        finally:
-            await dispose_database_runtime()
-
     def _run(self, coroutine):
         """
         Execute async repository code from synchronous Slack handlers.
 
-        Each call uses a fresh event loop and disposes the shared async engine
-        afterward so asyncpg connections are not bound to a closed loop.
+        Uses the shared background event loop so the async engine is reused
+        across approval clicks instead of recreated per operation.
         """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self._execute(coroutine))
-        raise RuntimeError("PostgresInvestigationStore cannot be used inside a running event loop")
+        return run_async(coroutine)
 
     def save(
         self,

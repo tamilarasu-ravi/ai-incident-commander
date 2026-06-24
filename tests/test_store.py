@@ -41,7 +41,7 @@ def test_store_survives_reload_from_disk(tmp_path, monkeypatch) -> None:
         reset_investigation_store,
     )
 
-    store_file = tmp_path / "persist.pkl"
+    store_file = tmp_path / "persist.json"
     monkeypatch.setenv("INVESTIGATION_STORE_FILE", str(store_file))
     reset_investigation_store()
 
@@ -64,6 +64,7 @@ def test_get_investigation_store_uses_postgres_when_database_url_configured(
 ) -> None:
     """Factory selects PostgreSQL backend when DATABASE_URL is set."""
     from ai_incident_commander.config import get_settings
+    from ai_incident_commander.db.session import reset_database_runtime
     from ai_incident_commander.store.investigations import reset_investigation_store
     from ai_incident_commander.store.postgres_store import PostgresInvestigationStore
 
@@ -72,11 +73,13 @@ def test_get_investigation_store_uses_postgres_when_database_url_configured(
         "postgresql+asyncpg://incident:incident@localhost:5432/incident_commander",
     )
     get_settings.cache_clear()
+    reset_database_runtime()
     reset_investigation_store()
 
     store = get_investigation_store()
     assert isinstance(store, PostgresInvestigationStore)
 
     reset_investigation_store()
+    reset_database_runtime()
     monkeypatch.setenv("DATABASE_URL", "")
     get_settings.cache_clear()

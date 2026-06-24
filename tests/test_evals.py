@@ -129,6 +129,35 @@ def test_compare_root_causes_exact_match() -> None:
     assert compare_root_causes(rca, rca) == 1.0
 
 
+async def test_redis_scenario_invokes_consistency_eval(eval_settings: Settings) -> None:
+    """Consistency eval runs after grounding passes."""
+    grounded = GroundingVerdict(
+        grounded=True,
+        grounding_score=1.0,
+        citation="Redis connection pool exhausted: max connections reached",
+    )
+
+    with (
+        patch(
+            "ai_incident_commander.agents.evaluator.check_grounding",
+            AsyncMock(return_value=grounded),
+        ),
+        patch(
+            "ai_incident_commander.agents.evaluator.score_consistency",
+            AsyncMock(return_value=0.95),
+        ) as consistency_mock,
+    ):
+        await run_evaluation_engine(
+            evidence=REDIS_POOL_EXHAUSTION_BUNDLE,
+            rca=_redis_rca(),
+            service=DEMO_SERVICE_NAME,
+            description="latency spike",
+            settings=eval_settings,
+        )
+
+    consistency_mock.assert_awaited_once()
+
+
 async def test_redis_scenario_surfaces_for_approval(eval_settings: Settings) -> None:
     """Redis pool exhaustion passes all evals and is not blocked."""
     grounded = GroundingVerdict(

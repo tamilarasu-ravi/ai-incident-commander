@@ -1,10 +1,19 @@
 """PagerDuty webhook route for automatic incident investigation."""
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+import json
+import threading
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ai_incident_commander.config import Settings, get_settings
 from ai_incident_commander.constants import INVESTIGATION_ANNOUNCEMENT_TEMPLATE
+from ai_incident_commander.server.pagerduty_security import (
+    PAGERDUTY_SIGNATURE_HEADER,
+    extract_pagerduty_event_id,
+    is_duplicate_pagerduty_event,
+    verify_pagerduty_signature,
+)
 from ai_incident_commander.slack.client import create_slack_web_client
 from ai_incident_commander.slack.investigation_runner import post_investigation_result
 
@@ -116,31 +125,63 @@ def _run_pagerduty_investigation(
 
 
 @router.post("/pagerduty", response_model=PagerDutyWebhookResponse)
-def pagerduty_webhook(
-    payload: dict,
-    background_tasks: BackgroundTasks,
-) -> PagerDutyWebhookResponse:
+async def pagerduty_webhook(request: Request) -> PagerDutyWebhookResponse:
     """
     Accept a PagerDuty incident webhook and start an investigation.
 
     Args:
-        payload: Raw PagerDuty webhook JSON body.
-        background_tasks: FastAPI background task runner.
+        request: Raw HTTP request with PagerDuty JSON body.
 
     Returns:
         Accepted status with parsed service and description.
 
     Raises:
-        HTTPException: If the payload cannot be parsed or Slack is not configured.
+        HTTPException: If the payload cannot be parsed, signature fails, or Slack is not configured.
     """
     settings = get_settings()
     if not settings.incidents_channel_id:
         raise HTTPException(status_code=503, detail="INCIDENTS_CHANNEL_ID is not configured")
+
+    raw_body = await request.body()
+    if settings.pagerduty_webhook_secret:
+        signature_header = request.headers.get(PAGERDUTY_SIGNATURE_HEADER, "")
+        if not verify_pagerduty_signature(
+            raw_body,
+            settings.pagerduty_webhook_secret,
+            signature_header,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid PagerDuty signature")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from error
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="PagerDuty payload must be a JSON object")
+
+    event_id = extract_pagerduty_event_id(payload)
+    if is_duplicate_pagerduty_event(event_id):
+        try:
+            service, description = parse_pagerduty_payload(payload)
+        except ValueError:
+            service, description = "unknown-service", "duplicate event"
+        return PagerDutyWebhookResponse(
+            status="duplicate",
+            service=service,
+            description=description,
+        )
 
     try:
         service, description = parse_pagerduty_payload(payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    background_tasks.add_task(_run_pagerduty_investigation, service, description, settings)
+    thread = threading.Thread(
+        target=_run_pagerduty_investigation,
+        args=(service, description, settings),
+        name=f"pagerduty-{event_id or service}",
+        daemon=True,
+    )
+    thread.start()
     return PagerDutyWebhookResponse(service=service, description=description)

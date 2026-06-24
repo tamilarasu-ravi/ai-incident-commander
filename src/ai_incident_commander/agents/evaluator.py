@@ -3,7 +3,7 @@
 import structlog
 
 from ai_incident_commander.config import Settings
-from ai_incident_commander.constants import EVIDENCE_COVERAGE_THRESHOLD
+from ai_incident_commander.constants import EVIDENCE_COVERAGE_THRESHOLD, GROUNDING_PASS_THRESHOLD
 from ai_incident_commander.evals.consistency import score_consistency
 from ai_incident_commander.evals.coverage import score_evidence_coverage
 from ai_incident_commander.evals.false_alarm import assess_false_alarm
@@ -75,7 +75,7 @@ async def run_evaluation_engine(
         score=grounding.grounding_score,
     )
 
-    if grounding.grounding_score < 1.0:
+    if grounding.grounding_score < GROUNDING_PASS_THRESHOLD:
         block_reason = (
             "RCA is not grounded in collected evidence."
             if not grounding.citation

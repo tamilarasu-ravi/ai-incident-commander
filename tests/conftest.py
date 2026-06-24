@@ -40,6 +40,7 @@ def make_settings():
             "datadog_log_index": "main",
             "evidence_lookback_hours": 2,
             "log_level": "info",
+            "pagerduty_webhook_secret": "",
         }
         base.update(overrides)
         return Settings.model_construct(**base)
@@ -51,6 +52,8 @@ def make_settings():
 def clear_investigation_store(monkeypatch, tmp_path):
     """Isolate investigation store state between tests."""
     from ai_incident_commander.config import get_settings
+    from ai_incident_commander.db.session import reset_database_runtime
+    from ai_incident_commander.server.pagerduty_security import reset_pagerduty_dedup_cache
     from ai_incident_commander.store.investigations import (
         get_investigation_store,
         reset_investigation_store,
@@ -58,8 +61,10 @@ def clear_investigation_store(monkeypatch, tmp_path):
 
     monkeypatch.setenv("DATABASE_URL", "")
     get_settings.cache_clear()
+    reset_database_runtime()
+    reset_pagerduty_dedup_cache()
 
-    store_file = tmp_path / "investigations.pkl"
+    store_file = tmp_path / "investigations.json"
     monkeypatch.setenv("INVESTIGATION_STORE_FILE", str(store_file))
     reset_investigation_store()
     store = get_investigation_store()
@@ -67,4 +72,6 @@ def clear_investigation_store(monkeypatch, tmp_path):
     yield
     store.clear()
     reset_investigation_store()
+    reset_database_runtime()
+    reset_pagerduty_dedup_cache()
     get_settings.cache_clear()

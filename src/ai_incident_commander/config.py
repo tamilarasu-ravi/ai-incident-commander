@@ -55,6 +55,11 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="info", validation_alias="LOG_LEVEL")
 
+    pagerduty_webhook_secret: str = Field(
+        default="",
+        validation_alias="PAGERDUTY_WEBHOOK_SECRET",
+    )
+
     @property
     def is_github_configured(self) -> bool:
         """Return True when GitHub token and repository coordinates are set."""

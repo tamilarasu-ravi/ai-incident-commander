@@ -10,6 +10,7 @@ from ai_incident_commander.constants import (
     EVAL_TYPE_COVERAGE,
     EVAL_TYPE_GROUNDING,
     EVIDENCE_COVERAGE_THRESHOLD,
+    GROUNDING_PASS_THRESHOLD,
 )
 from ai_incident_commander.models.eval_result import EvalResult
 from ai_incident_commander.models.evidence import EvidenceBundle
@@ -130,7 +131,7 @@ def build_eval_result_rows(
             "investigation_id": investigation_id,
             "eval_type": EVAL_TYPE_GROUNDING,
             "score": eval_result.grounding_score,
-            "passed": eval_result.grounding_score >= 1.0,
+            "passed": eval_result.grounding_score >= GROUNDING_PASS_THRESHOLD,
             "explanation": block_reason if eval_result.blocked else "",
         },
         {
