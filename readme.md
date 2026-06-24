@@ -8,7 +8,7 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 
 **Ship plan:** Full product in 7 days — sequenced build with demo reliability, not a reduced MVP.
 
-**Stack:** Python 3.11+ · LangGraph · Bolt for Python · FastAPI · Pydantic · PostgreSQL · MCP clients · OpenAI (primary LLM) · Google Gemini (fallback)
+**Stack:** Python 3.11+ · LangGraph · Bolt for Python · FastAPI · Pydantic · OpenAI (primary LLM) · Google Gemini (fallback)
 
 ---
 
@@ -21,6 +21,8 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 - [x] **Day 5:** Full eval engine; all three test scenarios passing (`pytest`)
 - [x] **Day 6:** PagerDuty webhook + Block Kit approval actions
 - [ ] **Day 7:** Demo video recorded; judge sandbox access granted
+
+**Hackathon build note:** Investigation and approval state is stored **in-memory** for this submission (`store/investigations.py`). Restarting the app clears pending RCAs. PostgreSQL dependencies in `docker-compose.yml` are scaffolding for post-hackathon persistence.
 
 ---
 
@@ -140,7 +142,7 @@ START → collect_evidence → synthesize_rca → run_evals → [route]
 | **FastAPI** | PagerDuty webhook + Slack HTTP events (production) |
 | **Pydantic** | RCA schema, evidence bundles, eval results, settings |
 | **slack-sdk** | RTS API (`assistant.search.context`), Web API calls |
-| **MCP (Python SDK)** | GitHub / Datadog / Jira tool clients |
+| **MCP (Python SDK)** | GitHub commit evidence via in-repo FastMCP server (`mcp/github_server.py`) |
 | **structlog** | Structured JSON logging |
 | **pytest** | Eval scenario tests + unit tests |
 
@@ -155,14 +157,14 @@ Two entry points, same LangGraph pipeline:
 - **PagerDuty webhook (primary)** — `POST /webhooks/pagerduty` on FastAPI. Parses the incident payload and invokes `investigation_graph.ainvoke(...)`.
 - **`/incident <service> <description>` slash command (fallback)** — Bolt handler in `slack/handlers/slash.py`. Reliable live trigger for demos and judging.
 
-Both paths converge on the same graph. In-flight investigations are persisted in **PostgreSQL** (investigation state, evidence snapshots, eval results, approval status) so **Approve**, **Reject**, and **Show Evidence** work after async evidence collection completes. Slack `private_metadata` on the Block Kit message stores only the `investigation_id` reference.
+Both paths converge on the same graph. In-flight investigations are persisted in an **in-memory store** (keyed by `investigation_id`) so **Approve**, **Reject**, and **Show Evidence** work after async evidence collection completes. PostgreSQL persistence is planned but not wired in this hackathon build.
 
 ### 2. Evidence Collection
 
 The `collect_evidence` node fans out in parallel:
 
-- **GitHub client** — commits, diffs, and deployment events from the past 2 hours for the affected service
-- **Datadog client** — error rate spikes, log clusters, and APM traces. Thin Python wrapper around the Datadog API if no official MCP server is available.
+- **GitHub client** — commits from the past 2 hours via an in-repo **FastMCP** server (`mcp/github_server.py`); falls back to direct REST if MCP fails. Set `GITHUB_USE_MCP=false` to skip MCP.
+- **Datadog client** — error rate spikes, log clusters, and APM traces via direct REST (`httpx`).
 - **Jira client** — past incident tickets; creates the RCA ticket on human approval
 - **RTS API** (`search/rts.py`) — searches `#incidents` messages from the last 90 days, matching on `service` name plus error keywords from the alert description
 
@@ -425,7 +427,6 @@ Pinned in `requirements.txt`. Core stack:
 | `pydantic-settings` | `.env` loading |
 | `httpx` | Async HTTP for GitHub / Jira / Datadog clients |
 | `structlog` | Structured JSON logging |
-| `mcp` | MCP protocol client for tool integrations |
 | `pytest` | Test runner |
 | `pytest-asyncio` | Async test support (`asyncio_mode = "auto"` set in `pyproject.toml`) |
 
@@ -443,13 +444,26 @@ Migrations live in `alembic/versions/` — never modify schema by hand.
 
 ### MCP integration
 
-Python MCP clients in `src/ai_incident_commander/integrations/` wrap external tools. Configuration is driven by environment variables (no secrets in code):
+GitHub commit evidence uses the **Model Context Protocol** via an in-repo FastMCP server:
+
+```
+GitHubClient.get_recent_commits()
+  → fetch_recent_commits_mcp()  [stdio]
+  → ai_incident_commander.mcp.github_server:list_recent_commits
+  → fetch_recent_commits_http()  (shared REST implementation)
+```
+
+- **Server:** `src/ai_incident_commander/mcp/github_server.py` — exposes `list_recent_commits` tool
+- **Client:** `src/ai_incident_commander/mcp/client.py` — spawns the server over stdio and calls tools
+- **Config:** `GITHUB_USE_MCP=true` (default). Set to `false` for direct REST only.
+- **Fallback:** If the MCP subprocess fails, `GitHubClient` automatically retries via `httpx`.
+
+Datadog, Jira, and Slack RTS use direct REST for now; the same MCP pattern can be extended later.
 
 ```python
-# Example: GitHub client uses MCP or direct API via httpx
 from ai_incident_commander.integrations.github import GitHubClient
 
-commits = await github_client.get_recent_commits(service="checkout-service", hours=2)
+commits = await GitHubClient(settings).get_recent_commits("checkout-service")
 ```
 
 ### Deploy (Railway / Render)
@@ -487,9 +501,13 @@ ai-incident-commander/
 │   │   ├── models.py             # ORM models (investigations, evals, approvals)
 │   │   └── repository.py         # Investigation CRUD
 │   ├── integrations/
-│   │   ├── github.py             # Commits, diffs, deployments
+│   │   ├── github.py             # Commits via MCP (with REST fallback)
+│   │   ├── github_mcp.py         # MCP wrapper for GitHub commits
 │   │   ├── datadog.py            # Logs, error clusters, APM
 │   │   └── jira.py               # Past incidents + ticket creation
+│   ├── mcp/
+│   │   ├── client.py             # Stdio MCP client helper
+│   │   └── github_server.py      # FastMCP server for GitHub commits
 │   ├── search/
 │   │   └── rts.py                # Real-Time Search API wrapper
 │   ├── models/

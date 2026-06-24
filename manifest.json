@@ -25,6 +25,7 @@
         "channels:read",
         "chat:write",
         "commands",
+        "assistant:read",
         "search:read.public"
       ]
     }

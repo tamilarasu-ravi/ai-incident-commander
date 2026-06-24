@@ -11,3 +11,5 @@ dist/
 build/
 
 .env
+.investigation_store.pkl
+.pytest_investigation_store.pkl

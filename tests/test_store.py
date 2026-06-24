@@ -32,3 +32,28 @@ def test_mark_approved_records_jira_key() -> None:
     assert updated is not None
     assert updated.approval_status == "approved"
     assert updated.jira_issue_key == "SCRUM-42"
+
+
+def test_store_survives_reload_from_disk(tmp_path, monkeypatch) -> None:
+    """Investigations persist to disk and reload in a new store instance."""
+    from ai_incident_commander.store.investigations import (
+        InvestigationStore,
+        reset_investigation_store,
+    )
+
+    store_file = tmp_path / "persist.pkl"
+    monkeypatch.setenv("INVESTIGATION_STORE_FILE", str(store_file))
+    reset_investigation_store()
+
+    state = InvestigationState(
+        investigation_id="inv-3",
+        service="checkout-service",
+        description="latency spike",
+        status="surfaced",
+    )
+    get_investigation_store().save("inv-3", state, channel_id="C123", message_ts="111.222")
+
+    reloaded = InvestigationStore(store_file=store_file)
+    record = reloaded.get("inv-3")
+    assert record is not None
+    assert record.channel_id == "C123"

@@ -58,6 +58,8 @@ def build_evidence_summary(evidence: EvidenceBundle) -> str:
 
 def build_rca_approval_blocks(
     state: InvestigationState,
+    *,
+    server_pid: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build Block Kit blocks for a surfaced RCA approval card.
@@ -84,6 +86,7 @@ def build_rca_approval_blocks(
         rca=rca,
         evidence=evidence,
         eval_result=eval_result,
+        server_pid=server_pid,
     )
 
 
@@ -125,6 +128,8 @@ def _build_card_blocks(
     rca: RcaHypothesis,
     evidence: EvidenceBundle,
     eval_result: EvalResult,
+    *,
+    server_pid: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build Block Kit blocks for RCA approval UI components.
@@ -185,7 +190,15 @@ def _build_card_blocks(
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": f"*Evidence collected:* {build_evidence_summary(evidence)}",
+                    "text": (
+                        f"*Evidence collected:* {build_evidence_summary(evidence)} · "
+                        f"*ID:* `{investigation_id[:8]}`"
+                        + (
+                            f" · *server pid:* `{server_pid}`"
+                            if server_pid is not None
+                            else ""
+                        )
+                    ),
                 }
             ],
         },

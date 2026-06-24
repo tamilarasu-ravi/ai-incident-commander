@@ -1,8 +1,10 @@
 """Block Kit action handlers for RCA approval workflow."""
 
 import asyncio
+import os
 import threading
 
+import structlog
 from slack_bolt import App
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -18,6 +20,33 @@ from ai_incident_commander.slack.views.approval import (
     build_rca_resolved_blocks,
 )
 from ai_incident_commander.store.investigations import get_investigation_store
+
+logger = structlog.get_logger(__name__)
+
+
+def _format_store_miss_message(investigation_id: str, stored_ids: list[str]) -> str:
+    """Explain why Show Evidence could not find the investigation on this server."""
+    short_requested = investigation_id[:8] if investigation_id else "?"
+    short_stored = [item[:8] for item in stored_ids]
+    lines = [
+        f"Investigation `{short_requested}` is not on this server (pid `{os.getpid()}`).",
+    ]
+    if short_stored:
+        stored_label = ", ".join(f"`{item}`" for item in short_stored)
+        lines.append(f"This server only has: {stored_label}.")
+    lines.extend(
+        [
+            "",
+            "This usually means `/incident` ran on a *different* server than the one "
+            "handling button clicks. In your Slack app settings, clear the Slash Command "
+            "Request URL when using Socket Mode, or point Slash Command + Interactivity "
+            "URLs to the same instance.",
+            "",
+            "Run `/incident` again after `slack_socket_ready` in your terminal and use "
+            "the newest RCA card (check *server pid* matches your terminal process).",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def register_action_handlers(app: App, settings: Settings) -> None:
@@ -67,14 +96,46 @@ def register_action_handlers(app: App, settings: Settings) -> None:
     def handle_show_evidence(ack, body, client: WebClient, action) -> None:
         """Post an ephemeral evidence dump to the acting user."""
         ack()
-        investigation_id = action.get("value", "")
+        investigation_id = (action or {}).get("value", "").strip()
+        if not investigation_id:
+            for item in body.get("actions", []):
+                if item.get("action_id") == ACTION_SHOW_EVIDENCE:
+                    investigation_id = str(item.get("value", "")).strip()
+                    break
         user_id = body.get("user", {}).get("id", "")
         channel_id = body.get("channel", {}).get("id", "")
 
-        record = get_investigation_store().get(investigation_id)
+        logger.info(
+            "show_evidence_clicked",
+            investigation_id=investigation_id or "<empty>",
+            pid=os.getpid(),
+        )
+
+        store = get_investigation_store()
+        record = store.get(investigation_id)
         if record is None:
-            _post_ephemeral(client, channel_id, user_id, "Investigation not found or expired.")
+            stored_ids = store.list_ids()
+            logger.warning(
+                "investigation_store_miss",
+                investigation_id=investigation_id or "<empty>",
+                stored_count=store.count(),
+                stored_ids=[item[:8] for item in stored_ids],
+                action=ACTION_SHOW_EVIDENCE,
+                pid=os.getpid(),
+            )
+            _post_ephemeral(
+                client,
+                channel_id,
+                user_id,
+                _format_store_miss_message(investigation_id, stored_ids),
+            )
             return
+
+        logger.info(
+            "investigation_store_hit",
+            investigation_id=investigation_id,
+            pid=os.getpid(),
+        )
 
         try:
             text = build_evidence_detail_text(record.state)

@@ -6,11 +6,30 @@ import httpx
 import structlog
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.integrations.github_mcp import fetch_recent_commits_mcp
+from ai_incident_commander.mcp.client import McpClientError
 from ai_incident_commander.models.evidence import CommitEvidence
 
 logger = structlog.get_logger(__name__)
 
 GITHUB_API_BASE_URL = "https://api.github.com"
+
+
+def _validate_github_token(token: str) -> None:
+    """
+    Ensure the GitHub token is safe for HTTP Authorization headers.
+
+    Args:
+        token: GitHub personal access token from settings.
+
+    Raises:
+        ValueError: If the token contains non-ASCII characters.
+    """
+    if token and not token.isascii():
+        raise ValueError(
+            "GITHUB_TOKEN contains non-ASCII characters (often a smart dash from copy/paste). "
+            "Regenerate the token at https://github.com/settings/tokens and update .env."
+        )
 
 
 class GitHubClientError(Exception):
@@ -31,6 +50,7 @@ class GitHubClient:
         self._owner = settings.github_repo_owner
         self._repo = settings.github_repo_name
         self._lookback_hours = settings.evidence_lookback_hours
+        self._use_mcp = settings.github_use_mcp
 
     @property
     def is_configured(self) -> bool:
@@ -54,32 +74,83 @@ class GitHubClient:
         if not self.is_configured:
             raise ValueError("GitHub client is not fully configured")
 
-        since = datetime.now(UTC) - timedelta(hours=self._lookback_hours)
-        since_iso = since.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        url = f"{GITHUB_API_BASE_URL}/repos/{self._owner}/{self._repo}/commits"
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        params = {"since": since_iso, "per_page": "20"}
+        if self._use_mcp:
+            try:
+                return await fetch_recent_commits_mcp(
+                    Settings.model_construct(
+                        github_token=self._token,
+                        github_repo_owner=self._owner,
+                        github_repo_name=self._repo,
+                        evidence_lookback_hours=self._lookback_hours,
+                        github_use_mcp=True,
+                    ),
+                    service,
+                )
+            except McpClientError as error:
+                logger.warning(
+                    "github_mcp_fetch_failed_fallback_http",
+                    service=service,
+                    error=str(error),
+                )
 
-        log = logger.bind(service=service, owner=self._owner, repo=self._repo)
-        log.info("github_fetch_commits_started")
+        return await fetch_recent_commits_http(
+            Settings.model_construct(
+                github_token=self._token,
+                github_repo_owner=self._owner,
+                github_repo_name=self._repo,
+                evidence_lookback_hours=self._lookback_hours,
+            ),
+            service,
+        )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=headers, params=params)
 
-        if response.status_code != 200:
-            log.error("github_fetch_commits_failed", status_code=response.status_code)
-            raise GitHubClientError(
-                f"GitHub API returned {response.status_code} for {self._owner}/{self._repo}"
-            )
+async def fetch_recent_commits_http(settings: Settings, service: str) -> list[CommitEvidence]:
+    """
+    Fetch commits from the GitHub REST API within the lookback window.
 
-        payload = response.json()
-        commits = [_map_commit(item, self._owner, self._repo) for item in payload]
-        log.info("github_fetch_commits_completed", count=len(commits))
-        return commits
+    Args:
+        settings: Application settings with GitHub credentials.
+        service: Affected service name (logged for context).
+
+    Returns:
+        List of ``CommitEvidence`` ordered newest-first.
+
+    Raises:
+        GitHubClientError: If the GitHub API request fails.
+        ValueError: If required configuration is missing.
+    """
+    if not settings.is_github_configured:
+        raise ValueError("GitHub client is not fully configured")
+
+    owner = settings.github_repo_owner
+    repo = settings.github_repo_name
+    _validate_github_token(settings.github_token)
+    since = datetime.now(UTC) - timedelta(hours=settings.evidence_lookback_hours)
+    since_iso = since.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/commits"
+    headers = {
+        "Authorization": f"Bearer {settings.github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    params = {"since": since_iso, "per_page": "20"}
+
+    log = logger.bind(service=service, owner=owner, repo=repo)
+    log.info("github_fetch_commits_started")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        log.error("github_fetch_commits_failed", status_code=response.status_code)
+        raise GitHubClientError(
+            f"GitHub API returned {response.status_code} for {owner}/{repo}"
+        )
+
+    payload = response.json()
+    commits = [_map_commit(item, owner, repo) for item in payload]
+    log.info("github_fetch_commits_completed", count=len(commits))
+    return commits
 
 
 def _map_commit(item: dict, owner: str, repo: str) -> CommitEvidence:

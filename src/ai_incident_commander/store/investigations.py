@@ -1,12 +1,17 @@
-"""In-memory investigation persistence for Slack approval actions."""
+"""Investigation persistence for Slack approval actions (memory + disk)."""
 
+import os
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Lock
 from typing import Literal
 
 from ai_incident_commander.models.investigation import InvestigationState
 
 ApprovalStatus = Literal["pending", "approved", "rejected"]
+
+DEFAULT_STORE_FILE = Path(".investigation_store.pkl")
 
 
 @dataclass
@@ -21,11 +26,40 @@ class StoredInvestigation:
 
 
 class InvestigationStore:
-    """Thread-safe in-memory store for surfaced investigations."""
+    """
+    Thread-safe investigation store with disk persistence.
 
-    def __init__(self) -> None:
+    Survives uvicorn ``--reload`` and is shared across processes on the same host
+    via a pickle file (default: ``.investigation_store.pkl``).
+    """
+
+    def __init__(self, store_file: Path | None = None) -> None:
         self._records: dict[str, StoredInvestigation] = {}
         self._lock = Lock()
+        self._store_file = store_file or Path(
+            os.environ.get("INVESTIGATION_STORE_FILE", str(DEFAULT_STORE_FILE))
+        )
+        self._load_from_disk()
+
+    def _load_from_disk(self) -> None:
+        """Merge investigations from the on-disk pickle file into memory."""
+        if not self._store_file.exists():
+            return
+        try:
+            with self._store_file.open("rb") as handle:
+                payload = pickle.load(handle)
+        except (OSError, pickle.PickleError):
+            return
+        if isinstance(payload, dict):
+            self._records.update(payload)
+
+    def _persist_to_disk(self) -> None:
+        """Write the in-memory store to disk for cross-process/reload recovery."""
+        self._store_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self._store_file.with_suffix(".tmp")
+        with temp_path.open("wb") as handle:
+            pickle.dump(self._records, handle)
+        temp_path.replace(self._store_file)
 
     def save(
         self,
@@ -52,7 +86,9 @@ class InvestigationStore:
             message_ts=message_ts,
         )
         with self._lock:
+            self._load_from_disk()
             self._records[investigation_id] = record
+            self._persist_to_disk()
         return record
 
     def get(self, investigation_id: str) -> StoredInvestigation | None:
@@ -66,7 +102,28 @@ class InvestigationStore:
             Stored record when present, otherwise ``None``.
         """
         with self._lock:
+            self._load_from_disk()
             return self._records.get(investigation_id)
+
+    def update_message_ts(self, investigation_id: str, message_ts: str) -> StoredInvestigation | None:
+        """
+        Attach the Slack message timestamp after the RCA card is posted.
+
+        Args:
+            investigation_id: Unique investigation identifier.
+            message_ts: Slack message timestamp for card updates.
+
+        Returns:
+            Updated record when present, otherwise ``None``.
+        """
+        with self._lock:
+            self._load_from_disk()
+            record = self._records.get(investigation_id)
+            if record is None:
+                return None
+            record.message_ts = message_ts
+            self._persist_to_disk()
+            return record
 
     def mark_approved(self, investigation_id: str, jira_issue_key: str) -> StoredInvestigation | None:
         """
@@ -80,11 +137,13 @@ class InvestigationStore:
             Updated record when present, otherwise ``None``.
         """
         with self._lock:
+            self._load_from_disk()
             record = self._records.get(investigation_id)
             if record is None:
                 return None
             record.approval_status = "approved"
             record.jira_issue_key = jira_issue_key
+            self._persist_to_disk()
             return record
 
     def mark_rejected(self, investigation_id: str) -> StoredInvestigation | None:
@@ -98,16 +157,32 @@ class InvestigationStore:
             Updated record when present, otherwise ``None``.
         """
         with self._lock:
+            self._load_from_disk()
             record = self._records.get(investigation_id)
             if record is None:
                 return None
             record.approval_status = "rejected"
+            self._persist_to_disk()
             return record
+
+    def count(self) -> int:
+        """Return the number of investigations currently stored."""
+        with self._lock:
+            self._load_from_disk()
+            return len(self._records)
+
+    def list_ids(self) -> list[str]:
+        """Return stored investigation IDs (for debugging store misses)."""
+        with self._lock:
+            self._load_from_disk()
+            return list(self._records.keys())
 
     def clear(self) -> None:
         """Remove all stored investigations (used in tests)."""
         with self._lock:
             self._records.clear()
+        if self._store_file.exists():
+            self._store_file.unlink()
 
 
 _store: InvestigationStore | None = None
@@ -124,3 +199,9 @@ def get_investigation_store() -> InvestigationStore:
     if _store is None:
         _store = InvestigationStore()
     return _store
+
+
+def reset_investigation_store() -> None:
+    """Reset the singleton (used in tests when the store file path changes)."""
+    global _store
+    _store = None

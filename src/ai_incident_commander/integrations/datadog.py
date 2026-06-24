@@ -7,6 +7,7 @@ import httpx
 import structlog
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.integrations.query_escape import format_datadog_service_filter
 from ai_incident_commander.models.evidence import LogClusterEvidence
 
 logger = structlog.get_logger(__name__)
@@ -73,7 +74,7 @@ class DatadogClient:
             "filter": {
                 "from": start.isoformat(),
                 "to": now.isoformat(),
-                "query": f"service:{service} status:error",
+                "query": f"{format_datadog_service_filter(service)} status:error",
                 "indexes": [self._log_index],
             },
             "page": {"limit": 50},

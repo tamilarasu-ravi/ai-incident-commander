@@ -6,6 +6,7 @@ import httpx
 import structlog
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.integrations.query_escape import escape_jql_string
 from ai_incident_commander.models.evidence import PriorIncidentEvidence
 from ai_incident_commander.models.investigation import InvestigationState
 
@@ -55,12 +56,13 @@ class JiraClient:
         if not self.is_configured:
             raise ValueError("Jira client is not fully configured")
 
+        safe_service = escape_jql_string(service)
         jql = (
             f'project = {self._project_key} AND '
-            f'(summary ~ "{service}" OR description ~ "{service}") '
+            f'(summary ~ "{safe_service}" OR description ~ "{safe_service}") '
             f"ORDER BY updated DESC"
         )
-        url = f"{self._base_url}/rest/api/3/search"
+        url = f"{self._base_url}/rest/api/3/search/jql"
         headers = {
             **_auth_headers(self._email, self._token),
             "Content-Type": "application/json",

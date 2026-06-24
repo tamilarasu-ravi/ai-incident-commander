@@ -28,6 +28,7 @@ def make_settings():
             "github_token": "",
             "github_repo_owner": "",
             "github_repo_name": "",
+            "github_use_mcp": False,
             "jira_api_token": "",
             "jira_base_url": "",
             "jira_email": "",
@@ -47,11 +48,18 @@ def make_settings():
 
 
 @pytest.fixture(autouse=True)
-def clear_investigation_store():
+def clear_investigation_store(monkeypatch, tmp_path):
     """Isolate investigation store state between tests."""
-    from ai_incident_commander.store.investigations import get_investigation_store
+    from ai_incident_commander.store.investigations import (
+        get_investigation_store,
+        reset_investigation_store,
+    )
 
+    store_file = tmp_path / "investigations.pkl"
+    monkeypatch.setenv("INVESTIGATION_STORE_FILE", str(store_file))
+    reset_investigation_store()
     store = get_investigation_store()
     store.clear()
     yield
     store.clear()
+    reset_investigation_store()

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     github_token: str = Field(default="", validation_alias="GITHUB_TOKEN")
     github_repo_owner: str = Field(default="", validation_alias="GITHUB_REPO_OWNER")
     github_repo_name: str = Field(default="", validation_alias="GITHUB_REPO_NAME")
+    github_use_mcp: bool = Field(default=True, validation_alias="GITHUB_USE_MCP")
 
     jira_api_token: str = Field(default="", validation_alias="JIRA_API_TOKEN")
     jira_base_url: str = Field(default="", validation_alias="JIRA_BASE_URL")

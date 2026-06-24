@@ -1,7 +1,9 @@
 """Slash command handlers for incident escalation."""
 
+import os
 import threading
 
+import structlog
 from slack_bolt import App
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -13,6 +15,8 @@ from ai_incident_commander.constants import (
     INVESTIGATION_ANNOUNCEMENT_TEMPLATE,
 )
 from ai_incident_commander.slack.investigation_runner import post_investigation_result
+
+logger = structlog.get_logger(__name__)
 
 
 class IncidentCommandParseError(ValueError):
@@ -126,6 +130,12 @@ def register_slash_handlers(app: App, settings: Settings) -> None:
             Does not raise — parse and API errors are returned to the user in Slack.
         """
         ack()
+        log = logger.bind(pid=os.getpid())
+        log.info(
+            "slash_command_received",
+            command=command.get("command"),
+            text=command.get("text", ""),
+        )
 
         if not settings.incidents_channel_id:
             respond(

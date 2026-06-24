@@ -74,6 +74,28 @@ async def test_get_prior_incidents_maps_api_response(jira_settings: Settings) ->
     assert incidents[0].resolved is True
 
 
+async def test_get_prior_incidents_escapes_service_in_jql(jira_settings: Settings) -> None:
+    """Service names with quotes are escaped in the JQL search request."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"issues": []}
+
+    mock_http = AsyncMock()
+    mock_http.post.return_value = mock_response
+    mock_http.__aenter__.return_value = mock_http
+    mock_http.__aexit__.return_value = None
+
+    malicious_service = 'evil" OR 1=1 --'
+
+    with patch("ai_incident_commander.integrations.jira.httpx.AsyncClient", return_value=mock_http):
+        await JiraClient(jira_settings).get_prior_incidents(malicious_service)
+
+    jql = mock_http.post.call_args.kwargs["json"]["jql"]
+    assert 'evil\\" OR 1=1 --' in jql
+    assert 'summary ~ "evil\\" OR 1=1 --"' in jql
+    assert mock_http.post.call_args.args[0].endswith("/rest/api/3/search/jql")
+
+
 async def test_get_prior_incidents_raises_on_api_error(jira_settings: Settings) -> None:
     """Non-200 Jira responses raise JiraClientError."""
     mock_response = MagicMock()

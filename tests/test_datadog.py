@@ -57,6 +57,26 @@ async def test_get_log_clusters_aggregates_messages(datadog_settings: Settings) 
     assert clusters[0].service == "checkout-service"
 
 
+async def test_get_log_clusters_escapes_service_in_query(datadog_settings: Settings) -> None:
+    """Service names with quotes are escaped in the Datadog log query."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"data": []}
+
+    mock_http = AsyncMock()
+    mock_http.post.return_value = mock_response
+    mock_http.__aenter__.return_value = mock_http
+    mock_http.__aexit__.return_value = None
+
+    malicious_service = 'evil" OR service:admin'
+
+    with patch("ai_incident_commander.integrations.datadog.httpx.AsyncClient", return_value=mock_http):
+        await DatadogClient(datadog_settings).get_log_clusters(malicious_service)
+
+    query = mock_http.post.call_args.kwargs["json"]["filter"]["query"]
+    assert query == 'service:"evil\\" OR service:admin" status:error'
+
+
 async def test_get_log_clusters_raises_on_api_error(datadog_settings: Settings) -> None:
     """Non-200 Datadog responses raise DatadogClientError."""
     mock_response = MagicMock()
