@@ -2,13 +2,19 @@
 
 from contextlib import asynccontextmanager
 
+from urllib.parse import urlparse
+
+import structlog
 from fastapi import FastAPI, Request
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 
 from ai_incident_commander.config import get_settings
+from ai_incident_commander.db.session import init_database
+from ai_incident_commander.db.url import database_connection_hint, resolve_database_url
 from ai_incident_commander.logging_setup import configure_logging
 from ai_incident_commander.server.routes.pagerduty import router as pagerduty_router
 from ai_incident_commander.slack.app import get_slack_app, start_socket_mode, stop_socket_mode
+from ai_incident_commander.store.investigations import configure_investigation_store
 
 configure_logging(get_settings().log_level)
 
@@ -25,6 +31,29 @@ async def lifespan(_: FastAPI):
         Control to the running application between startup and shutdown.
     """
     start_socket_mode()
+    settings = get_settings()
+    log = structlog.get_logger(__name__)
+    if settings.is_database_configured:
+        resolved_url = resolve_database_url(settings.database_url)
+        try:
+            await init_database(resolved_url)
+            configure_investigation_store(use_postgres=True, database_url=resolved_url)
+            log.info(
+                "database_ready",
+                backend="postgresql",
+                database_host=urlparse(resolved_url).hostname,
+                hint="Investigations persist across restarts",
+            )
+        except Exception as error:
+            configure_investigation_store(use_postgres=False)
+            log.warning(
+                "database_connection_failed",
+                error=str(error),
+                hint=database_connection_hint(settings.database_url),
+                fallback="pickle",
+            )
+    else:
+        configure_investigation_store(use_postgres=False)
     yield
     stop_socket_mode()
 

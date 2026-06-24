@@ -71,6 +71,11 @@ class Settings(BaseSettings):
         return bool(self.jira_api_token and self.jira_email and self.jira_base_url)
 
     @property
+    def is_database_configured(self) -> bool:
+        """Return True when a PostgreSQL database URL is configured."""
+        return bool(self.database_url)
+
+    @property
     def is_slack_socket_mode_ready(self) -> bool:
         """Return True when Socket Mode can be started with the configured tokens."""
         return bool(self.slack_bot_token and self.slack_app_token)

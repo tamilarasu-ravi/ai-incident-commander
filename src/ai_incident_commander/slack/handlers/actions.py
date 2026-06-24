@@ -181,7 +181,7 @@ def _process_approve(
         )
         return
 
-    store.mark_approved(investigation_id, issue_key)
+    store.mark_approved(investigation_id, issue_key, actor_slack_id=actor_id)
     _update_resolved_card(
         client=client,
         settings=settings,
@@ -218,7 +218,7 @@ def _process_reject(
         )
         return
 
-    store.mark_rejected(investigation_id)
+    store.mark_rejected(investigation_id, actor_slack_id=actor_id)
     _update_resolved_card(
         client=client,
         settings=settings,

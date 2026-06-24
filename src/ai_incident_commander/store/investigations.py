@@ -1,207 +1,72 @@
-"""Investigation persistence for Slack approval actions (memory + disk)."""
+"""Investigation persistence for Slack approval actions."""
 
-import os
-import pickle
-from dataclasses import dataclass
-from pathlib import Path
-from threading import Lock
-from typing import Literal
+from ai_incident_commander.config import get_settings
+from ai_incident_commander.db.url import resolve_database_url
+from ai_incident_commander.store.pickle_store import PickleInvestigationStore
+from ai_incident_commander.store.types import (
+    ApprovalStatus,
+    InvestigationStoreProtocol,
+    StoredInvestigation,
+)
 
-from ai_incident_commander.models.investigation import InvestigationState
-
-ApprovalStatus = Literal["pending", "approved", "rejected"]
-
-DEFAULT_STORE_FILE = Path(".investigation_store.pkl")
-
-
-@dataclass
-class StoredInvestigation:
-    """Investigation state plus Slack message coordinates for follow-up actions."""
-
-    state: InvestigationState
-    channel_id: str
-    message_ts: str
-    approval_status: ApprovalStatus = "pending"
-    jira_issue_key: str | None = None
+_store: InvestigationStoreProtocol | None = None
+_postgres_database_url: str | None = None
+_force_pickle: bool = False
 
 
-class InvestigationStore:
+def configure_investigation_store(*, use_postgres: bool, database_url: str = "") -> None:
     """
-    Thread-safe investigation store with disk persistence.
+    Select the investigation store backend for this process.
 
-    Survives uvicorn ``--reload`` and is shared across processes on the same host
-    via a pickle file (default: ``.investigation_store.pkl``).
+    Args:
+        use_postgres: Whether PostgreSQL should back Slack approval actions.
+        database_url: Resolved PostgreSQL URL when ``use_postgres`` is True.
     """
-
-    def __init__(self, store_file: Path | None = None) -> None:
-        self._records: dict[str, StoredInvestigation] = {}
-        self._lock = Lock()
-        self._store_file = store_file or Path(
-            os.environ.get("INVESTIGATION_STORE_FILE", str(DEFAULT_STORE_FILE))
-        )
-        self._load_from_disk()
-
-    def _load_from_disk(self) -> None:
-        """Merge investigations from the on-disk pickle file into memory."""
-        if not self._store_file.exists():
-            return
-        try:
-            with self._store_file.open("rb") as handle:
-                payload = pickle.load(handle)
-        except (OSError, pickle.PickleError):
-            return
-        if isinstance(payload, dict):
-            self._records.update(payload)
-
-    def _persist_to_disk(self) -> None:
-        """Write the in-memory store to disk for cross-process/reload recovery."""
-        self._store_file.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._store_file.with_suffix(".tmp")
-        with temp_path.open("wb") as handle:
-            pickle.dump(self._records, handle)
-        temp_path.replace(self._store_file)
-
-    def save(
-        self,
-        investigation_id: str,
-        state: InvestigationState,
-        channel_id: str,
-        message_ts: str,
-    ) -> StoredInvestigation:
-        """
-        Persist a surfaced investigation for later Block Kit actions.
-
-        Args:
-            investigation_id: Unique investigation identifier.
-            state: Final investigation state from the graph.
-            channel_id: Slack channel containing the RCA card.
-            message_ts: Slack message timestamp for updates.
-
-        Returns:
-            Stored investigation record.
-        """
-        record = StoredInvestigation(
-            state=state,
-            channel_id=channel_id,
-            message_ts=message_ts,
-        )
-        with self._lock:
-            self._load_from_disk()
-            self._records[investigation_id] = record
-            self._persist_to_disk()
-        return record
-
-    def get(self, investigation_id: str) -> StoredInvestigation | None:
-        """
-        Load a stored investigation by ID.
-
-        Args:
-            investigation_id: Unique investigation identifier.
-
-        Returns:
-            Stored record when present, otherwise ``None``.
-        """
-        with self._lock:
-            self._load_from_disk()
-            return self._records.get(investigation_id)
-
-    def update_message_ts(self, investigation_id: str, message_ts: str) -> StoredInvestigation | None:
-        """
-        Attach the Slack message timestamp after the RCA card is posted.
-
-        Args:
-            investigation_id: Unique investigation identifier.
-            message_ts: Slack message timestamp for card updates.
-
-        Returns:
-            Updated record when present, otherwise ``None``.
-        """
-        with self._lock:
-            self._load_from_disk()
-            record = self._records.get(investigation_id)
-            if record is None:
-                return None
-            record.message_ts = message_ts
-            self._persist_to_disk()
-            return record
-
-    def mark_approved(self, investigation_id: str, jira_issue_key: str) -> StoredInvestigation | None:
-        """
-        Mark an investigation as approved and record the created Jira issue.
-
-        Args:
-            investigation_id: Unique investigation identifier.
-            jira_issue_key: Created Jira issue key such as ``SCRUM-42``.
-
-        Returns:
-            Updated record when present, otherwise ``None``.
-        """
-        with self._lock:
-            self._load_from_disk()
-            record = self._records.get(investigation_id)
-            if record is None:
-                return None
-            record.approval_status = "approved"
-            record.jira_issue_key = jira_issue_key
-            self._persist_to_disk()
-            return record
-
-    def mark_rejected(self, investigation_id: str) -> StoredInvestigation | None:
-        """
-        Mark an investigation as rejected.
-
-        Args:
-            investigation_id: Unique investigation identifier.
-
-        Returns:
-            Updated record when present, otherwise ``None``.
-        """
-        with self._lock:
-            self._load_from_disk()
-            record = self._records.get(investigation_id)
-            if record is None:
-                return None
-            record.approval_status = "rejected"
-            self._persist_to_disk()
-            return record
-
-    def count(self) -> int:
-        """Return the number of investigations currently stored."""
-        with self._lock:
-            self._load_from_disk()
-            return len(self._records)
-
-    def list_ids(self) -> list[str]:
-        """Return stored investigation IDs (for debugging store misses)."""
-        with self._lock:
-            self._load_from_disk()
-            return list(self._records.keys())
-
-    def clear(self) -> None:
-        """Remove all stored investigations (used in tests)."""
-        with self._lock:
-            self._records.clear()
-        if self._store_file.exists():
-            self._store_file.unlink()
+    global _store, _postgres_database_url, _force_pickle
+    _force_pickle = not use_postgres
+    _postgres_database_url = database_url if use_postgres else None
+    _store = None
 
 
-_store: InvestigationStore | None = None
-
-
-def get_investigation_store() -> InvestigationStore:
+def get_investigation_store() -> InvestigationStoreProtocol:
     """
     Return the process-wide investigation store singleton.
 
+    Uses PostgreSQL when configured and reachable; otherwise falls back to pickle.
+
     Returns:
-        Shared ``InvestigationStore`` instance.
+        Shared investigation store instance.
     """
     global _store
     if _store is None:
-        _store = InvestigationStore()
+        settings = get_settings()
+        if not _force_pickle and (_postgres_database_url or settings.database_url):
+            from ai_incident_commander.store.postgres_store import PostgresInvestigationStore
+
+            database_url = _postgres_database_url or resolve_database_url(settings.database_url)
+            _store = PostgresInvestigationStore(database_url)
+        else:
+            _store = PickleInvestigationStore()
     return _store
 
 
 def reset_investigation_store() -> None:
-    """Reset the singleton (used in tests when the store file path changes)."""
-    global _store
+    """Reset the singleton (used in tests when the store backend changes)."""
+    global _store, _postgres_database_url, _force_pickle
     _store = None
+    _postgres_database_url = None
+    _force_pickle = False
+
+
+# Backward-compatible alias for direct pickle store construction in tests.
+InvestigationStore = PickleInvestigationStore
+
+__all__ = [
+    "ApprovalStatus",
+    "InvestigationStore",
+    "InvestigationStoreProtocol",
+    "StoredInvestigation",
+    "configure_investigation_store",
+    "get_investigation_store",
+    "reset_investigation_store",
+]

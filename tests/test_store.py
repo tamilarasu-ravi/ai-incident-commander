@@ -57,3 +57,26 @@ def test_store_survives_reload_from_disk(tmp_path, monkeypatch) -> None:
     record = reloaded.get("inv-3")
     assert record is not None
     assert record.channel_id == "C123"
+
+
+def test_get_investigation_store_uses_postgres_when_database_url_configured(
+    monkeypatch,
+) -> None:
+    """Factory selects PostgreSQL backend when DATABASE_URL is set."""
+    from ai_incident_commander.config import get_settings
+    from ai_incident_commander.store.investigations import reset_investigation_store
+    from ai_incident_commander.store.postgres_store import PostgresInvestigationStore
+
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://incident:incident@localhost:5432/incident_commander",
+    )
+    get_settings.cache_clear()
+    reset_investigation_store()
+
+    store = get_investigation_store()
+    assert isinstance(store, PostgresInvestigationStore)
+
+    reset_investigation_store()
+    monkeypatch.setenv("DATABASE_URL", "")
+    get_settings.cache_clear()

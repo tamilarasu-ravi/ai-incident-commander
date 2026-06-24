@@ -50,10 +50,14 @@ def make_settings():
 @pytest.fixture(autouse=True)
 def clear_investigation_store(monkeypatch, tmp_path):
     """Isolate investigation store state between tests."""
+    from ai_incident_commander.config import get_settings
     from ai_incident_commander.store.investigations import (
         get_investigation_store,
         reset_investigation_store,
     )
+
+    monkeypatch.setenv("DATABASE_URL", "")
+    get_settings.cache_clear()
 
     store_file = tmp_path / "investigations.pkl"
     monkeypatch.setenv("INVESTIGATION_STORE_FILE", str(store_file))
@@ -63,3 +67,4 @@ def clear_investigation_store(monkeypatch, tmp_path):
     yield
     store.clear()
     reset_investigation_store()
+    get_settings.cache_clear()

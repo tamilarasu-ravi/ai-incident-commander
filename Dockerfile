@@ -17,6 +17,8 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
 COPY src ./src
+COPY alembic ./alembic
+COPY alembic.ini ./
 RUN pip install -e .
 
 EXPOSE 8000
