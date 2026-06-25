@@ -6,6 +6,7 @@ import pytest
 
 from ai_incident_commander.config import Settings
 from ai_incident_commander.integrations.jira import JiraClient, JiraClientError
+from tests.conftest import TEST_JIRA_API_TOKEN
 from ai_incident_commander.models.eval_result import EvalResult
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.models.rca import RcaHypothesis
@@ -16,7 +17,7 @@ from tests.fixtures import REDIS_POOL_EXHAUSTION_BUNDLE
 def jira_settings(make_settings):
     """Settings with Jira credentials configured."""
     return make_settings(
-        jira_api_token="jira-token",
+        jira_api_token=TEST_JIRA_API_TOKEN,
         jira_email="you@example.com",
         jira_base_url="https://example.atlassian.net",
         jira_project_key="SCRUM",
@@ -33,7 +34,7 @@ def test_jira_client_not_configured_without_email(make_settings) -> None:
     """Client reports unconfigured when email is missing."""
     client = JiraClient(
         make_settings(
-            jira_api_token="jira-token",
+            jira_api_token=TEST_JIRA_API_TOKEN,
             jira_base_url="https://example.atlassian.net",
         )
     )

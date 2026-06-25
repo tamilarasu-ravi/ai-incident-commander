@@ -11,6 +11,12 @@ from ai_incident_commander.models.evidence import (
     LogClusterEvidence,
     PriorIncidentEvidence,
 )
+from tests.conftest import (
+    TEST_DATADOG_API_KEY,
+    TEST_DATADOG_APP_KEY,
+    TEST_GITHUB_TOKEN,
+    TEST_JIRA_API_TOKEN,
+)
 from tests.fixtures import DEMO_SERVICE_NAME
 
 
@@ -18,11 +24,11 @@ from tests.fixtures import DEMO_SERVICE_NAME
 def integration_settings(make_settings):
     """Settings with GitHub and Datadog configured."""
     return make_settings(
-        github_token="test-token",
+        github_token=TEST_GITHUB_TOKEN,
         github_repo_owner="acme",
         github_repo_name="checkout-service",
-        datadog_api_key="dd-api-key",
-        datadog_app_key="dd-app-key",
+        datadog_api_key=TEST_DATADOG_API_KEY,
+        datadog_app_key=TEST_DATADOG_APP_KEY,
         datadog_site="ap1.datadoghq.com",
     )
 
@@ -31,13 +37,13 @@ def integration_settings(make_settings):
 def full_integration_settings(make_settings):
     """Settings with GitHub, Datadog, Jira, and Slack RTS configured."""
     return make_settings(
-        github_token="test-token",
+        github_token=TEST_GITHUB_TOKEN,
         github_repo_owner="acme",
         github_repo_name="checkout-service",
-        datadog_api_key="dd-api-key",
-        datadog_app_key="dd-app-key",
+        datadog_api_key=TEST_DATADOG_API_KEY,
+        datadog_app_key=TEST_DATADOG_APP_KEY,
         datadog_site="ap1.datadoghq.com",
-        jira_api_token="jira-token",
+        jira_api_token=TEST_JIRA_API_TOKEN,
         jira_email="you@example.com",
         jira_base_url="https://example.atlassian.net",
         jira_project_key="SCRUM",
@@ -141,7 +147,7 @@ async def test_collect_live_evidence_merges_jira_and_rts_prior_incidents(
 async def test_collect_live_evidence_raises_for_unknown_service(make_settings) -> None:
     """Unknown services without live data or fixtures raise ValueError."""
     settings = make_settings(
-        github_token="test-token",
+        github_token=TEST_GITHUB_TOKEN,
         github_repo_owner="acme",
         github_repo_name="repo",
     )

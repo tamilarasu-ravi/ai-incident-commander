@@ -7,6 +7,7 @@ import httpx
 import structlog
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.integrations.credentials import validate_datadog_credentials
 from ai_incident_commander.integrations.query_escape import format_datadog_service_filter
 from ai_incident_commander.models.evidence import LogClusterEvidence
 
@@ -32,6 +33,12 @@ class DatadogClient:
         self._site = settings.datadog_site
         self._log_index = settings.datadog_log_index
         self._lookback_hours = settings.evidence_lookback_hours
+        if self.is_configured:
+            validate_datadog_credentials(
+                settings.datadog_api_key,
+                settings.datadog_app_key,
+                settings.datadog_site,
+            )
 
     @property
     def is_configured(self) -> bool:

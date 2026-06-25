@@ -6,6 +6,7 @@ import httpx
 import structlog
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.integrations.credentials import validate_jira_credentials
 from ai_incident_commander.integrations.query_escape import escape_jql_string
 from ai_incident_commander.models.evidence import PriorIncidentEvidence
 from ai_incident_commander.models.investigation import InvestigationState
@@ -32,6 +33,12 @@ class JiraClient:
         self._base_url = settings.jira_base_url.rstrip("/")
         self._project_key = settings.jira_project_key
         self._issue_type = settings.jira_issue_type
+        if self.is_configured:
+            validate_jira_credentials(
+                settings.jira_api_token,
+                settings.jira_email,
+                settings.jira_base_url,
+            )
 
     @property
     def is_configured(self) -> bool:

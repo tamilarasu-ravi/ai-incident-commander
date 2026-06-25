@@ -6,6 +6,7 @@ import httpx
 import structlog
 
 from ai_incident_commander.config import Settings
+from ai_incident_commander.integrations.credentials import validate_github_credentials
 from ai_incident_commander.integrations.github_mcp import fetch_recent_commits_mcp
 from ai_incident_commander.mcp.client import McpClientError
 from ai_incident_commander.models.evidence import CommitEvidence
@@ -13,23 +14,6 @@ from ai_incident_commander.models.evidence import CommitEvidence
 logger = structlog.get_logger(__name__)
 
 GITHUB_API_BASE_URL = "https://api.github.com"
-
-
-def _validate_github_token(token: str) -> None:
-    """
-    Ensure the GitHub token is safe for HTTP Authorization headers.
-
-    Args:
-        token: GitHub personal access token from settings.
-
-    Raises:
-        ValueError: If the token contains non-ASCII characters.
-    """
-    if token and not token.isascii():
-        raise ValueError(
-            "GITHUB_TOKEN contains non-ASCII characters (often a smart dash from copy/paste). "
-            "Regenerate the token at https://github.com/settings/tokens and update .env."
-        )
 
 
 class GitHubClientError(Exception):
@@ -51,6 +35,12 @@ class GitHubClient:
         self._repo = settings.github_repo_name
         self._lookback_hours = settings.evidence_lookback_hours
         self._use_mcp = settings.github_use_mcp
+        if self.is_configured:
+            validate_github_credentials(
+                settings.github_token,
+                settings.github_repo_owner,
+                settings.github_repo_name,
+            )
 
     @property
     def is_configured(self) -> bool:
@@ -124,7 +114,7 @@ async def fetch_recent_commits_http(settings: Settings, service: str) -> list[Co
 
     owner = settings.github_repo_owner
     repo = settings.github_repo_name
-    _validate_github_token(settings.github_token)
+    validate_github_credentials(settings.github_token, owner, repo)
     since = datetime.now(UTC) - timedelta(hours=settings.evidence_lookback_hours)
     since_iso = since.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/commits"

@@ -11,6 +11,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from ai_incident_commander.config import get_settings
 from ai_incident_commander.db.session import init_database
 from ai_incident_commander.db.url import database_connection_hint, resolve_database_url
+from ai_incident_commander.integrations.credentials import validate_startup_credentials
 from ai_incident_commander.logging_setup import configure_logging
 from ai_incident_commander.server.routes.pagerduty import router as pagerduty_router
 from ai_incident_commander.slack.app import get_slack_app, start_socket_mode, stop_socket_mode
@@ -30,8 +31,9 @@ async def lifespan(_: FastAPI):
     Yields:
         Control to the running application between startup and shutdown.
     """
-    start_socket_mode()
     settings = get_settings()
+    validate_startup_credentials(settings)
+    start_socket_mode(settings)
     log = structlog.get_logger(__name__)
     if settings.is_database_configured:
         resolved_url = resolve_database_url(settings.database_url)

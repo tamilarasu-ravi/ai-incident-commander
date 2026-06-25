@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from ai_incident_commander.config import Settings
 from ai_incident_commander.models.eval_result import EvalResult
+from tests.conftest import TEST_JIRA_API_TOKEN
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.models.rca import RcaHypothesis
 from ai_incident_commander.slack.handlers.actions import _process_approve, _process_reject
@@ -32,7 +33,7 @@ def _surfaced_state() -> InvestigationState:
 def test_process_approve_creates_jira_and_updates_store(make_settings) -> None:
     """Approve action creates a Jira ticket and marks the investigation approved."""
     settings: Settings = make_settings(
-        jira_api_token="jira-token",
+        jira_api_token=TEST_JIRA_API_TOKEN,
         jira_email="you@example.com",
         jira_base_url="https://example.atlassian.net",
     )
@@ -65,7 +66,7 @@ def test_process_approve_creates_jira_and_updates_store(make_settings) -> None:
 def test_process_approve_rejects_duplicate_approval(make_settings) -> None:
     """Second approve click is rejected without creating another Jira ticket."""
     settings: Settings = make_settings(
-        jira_api_token="jira-token",
+        jira_api_token=TEST_JIRA_API_TOKEN,
         jira_email="you@example.com",
         jira_base_url="https://example.atlassian.net",
     )

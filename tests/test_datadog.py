@@ -6,14 +6,15 @@ import pytest
 
 from ai_incident_commander.config import Settings
 from ai_incident_commander.integrations.datadog import DatadogClient, DatadogClientError
+from tests.conftest import TEST_DATADOG_API_KEY, TEST_DATADOG_APP_KEY
 
 
 @pytest.fixture
 def datadog_settings(make_settings):
     """Settings with Datadog credentials configured for AP1."""
     return make_settings(
-        datadog_api_key="dd-api-key",
-        datadog_app_key="dd-app-key",
+        datadog_api_key=TEST_DATADOG_API_KEY,
+        datadog_app_key=TEST_DATADOG_APP_KEY,
         datadog_site="ap1.datadoghq.com",
     )
 

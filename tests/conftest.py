@@ -4,6 +4,11 @@ import pytest
 
 from ai_incident_commander.config import Settings
 
+TEST_GITHUB_TOKEN = "github_pat_" + ("x" * 40)
+TEST_DATADOG_API_KEY = "a" * 32
+TEST_DATADOG_APP_KEY = "b" * 32
+TEST_JIRA_API_TOKEN = "c" * 32
+
 
 @pytest.fixture
 def make_settings():

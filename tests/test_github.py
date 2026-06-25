@@ -7,6 +7,7 @@ import pytest
 
 from ai_incident_commander.config import Settings
 from ai_incident_commander.integrations.github import GitHubClient, GitHubClientError
+from tests.conftest import TEST_GITHUB_TOKEN
 from ai_incident_commander.mcp.client import McpClientError
 from ai_incident_commander.models.evidence import CommitEvidence
 
@@ -15,7 +16,7 @@ from ai_incident_commander.models.evidence import CommitEvidence
 def github_settings(make_settings):
     """Settings with GitHub credentials configured."""
     return make_settings(
-        github_token="test-token",
+        github_token=TEST_GITHUB_TOKEN,
         github_repo_owner="acme",
         github_repo_name="checkout-service",
     )
@@ -96,7 +97,7 @@ async def test_get_recent_commits_raises_on_api_error(github_settings: Settings)
 async def test_get_recent_commits_uses_mcp_when_enabled(make_settings) -> None:
     """When GITHUB_USE_MCP is true, commits are fetched via the MCP wrapper."""
     settings = make_settings(
-        github_token="test-token",
+        github_token=TEST_GITHUB_TOKEN,
         github_repo_owner="acme",
         github_repo_name="checkout-service",
         github_use_mcp=True,
@@ -125,7 +126,7 @@ async def test_get_recent_commits_uses_mcp_when_enabled(make_settings) -> None:
 async def test_get_recent_commits_falls_back_to_http_on_mcp_error(make_settings) -> None:
     """MCP failures fall back to the direct GitHub REST client."""
     settings = make_settings(
-        github_token="test-token",
+        github_token=TEST_GITHUB_TOKEN,
         github_repo_owner="acme",
         github_repo_name="checkout-service",
         github_use_mcp=True,
