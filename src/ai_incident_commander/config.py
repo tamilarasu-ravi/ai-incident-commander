@@ -52,6 +52,26 @@ class Settings(BaseSettings):
         default=2,
         validation_alias="EVIDENCE_LOOKBACK_HOURS",
     )
+    evidence_field_max_chars: int = Field(
+        default=500,
+        validation_alias="EVIDENCE_FIELD_MAX_CHARS",
+    )
+    evidence_prompt_token_budget: int = Field(
+        default=6000,
+        validation_alias="EVIDENCE_PROMPT_TOKEN_BUDGET",
+    )
+    chars_per_token_estimate: int = Field(
+        default=4,
+        validation_alias="CHARS_PER_TOKEN_ESTIMATE",
+    )
+    openai_grounding_model: str = Field(
+        default="",
+        validation_alias="OPENAI_GROUNDING_MODEL",
+    )
+    google_grounding_model: str = Field(
+        default="",
+        validation_alias="GOOGLE_GROUNDING_MODEL",
+    )
 
     log_level: str = Field(default="info", validation_alias="LOG_LEVEL")
 

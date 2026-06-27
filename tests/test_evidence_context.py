@@ -174,3 +174,37 @@ def test_prepare_evidence_for_llm_respects_default_token_budget() -> None:
 
     prepared = prepare_evidence_for_llm(bundle)
     assert estimate_token_count(prepared.model_dump_json()) <= EVIDENCE_PROMPT_TOKEN_BUDGET
+
+
+def test_prepare_evidence_for_llm_honors_custom_budget_settings() -> None:
+    """Custom field and token budget settings tighten evidence compaction."""
+    huge_message = "z" * 2000
+    bundle = EvidenceBundle(
+        commits=[
+            CommitEvidence(
+                sha=f"sha{i}",
+                message=huge_message,
+                author="dev@example.com",
+                age_minutes=i,
+            )
+            for i in range(20)
+        ],
+        log_clusters=[
+            LogClusterEvidence(
+                message=huge_message,
+                count=10,
+                service="checkout-service",
+            )
+            for _ in range(20)
+        ],
+    )
+
+    prepared = prepare_evidence_for_llm(
+        bundle,
+        field_max_chars=120,
+        token_budget=200,
+        chars_per_token=4,
+    )
+
+    assert len(prepared.commits[0].message) <= 120
+    assert estimate_token_count(prepared.model_dump_json(), chars_per_token=4) <= 200

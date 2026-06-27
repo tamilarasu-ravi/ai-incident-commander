@@ -92,24 +92,32 @@ def truncate_evidence_bundle(
     )
 
 
-def estimate_token_count(text: str) -> int:
+def estimate_token_count(
+    text: str,
+    *,
+    chars_per_token: int = CHARS_PER_TOKEN_ESTIMATE,
+) -> int:
     """
     Estimate token count from text length using a fixed chars-per-token ratio.
 
     Args:
         text: Prompt text to estimate.
+        chars_per_token: Estimated characters per token for budgeting.
 
     Returns:
         Estimated token count (minimum 1 for non-empty text).
     """
     if not text:
         return 0
-    return max(1, len(text) // CHARS_PER_TOKEN_ESTIMATE)
+    return max(1, len(text) // chars_per_token)
 
 
 def apply_token_budget(
     evidence: EvidenceBundle,
     budget: int = EVIDENCE_PROMPT_TOKEN_BUDGET,
+    *,
+    field_max_chars: int = EVIDENCE_FIELD_MAX_CHARS,
+    chars_per_token: int = CHARS_PER_TOKEN_ESTIMATE,
 ) -> EvidenceBundle:
     """
     Shrink an evidence bundle until its JSON form fits the token budget.
@@ -124,12 +132,12 @@ def apply_token_budget(
     Returns:
         Evidence bundle that fits the budget when possible.
     """
-    bundle = truncate_evidence_bundle(evidence)
-    if estimate_token_count(bundle.model_dump_json()) <= budget:
+    bundle = truncate_evidence_bundle(evidence, max_chars=field_max_chars)
+    if estimate_token_count(bundle.model_dump_json(), chars_per_token=chars_per_token) <= budget:
         return bundle
 
     working = bundle.model_copy(deep=True)
-    while estimate_token_count(working.model_dump_json()) > budget:
+    while estimate_token_count(working.model_dump_json(), chars_per_token=chars_per_token) > budget:
         if working.deployments:
             working.deployments = working.deployments[:-1]
             continue
@@ -144,25 +152,42 @@ def apply_token_budget(
             continue
         break
 
-    field_limit = EVIDENCE_FIELD_MAX_CHARS
-    while estimate_token_count(working.model_dump_json()) > budget and field_limit > 80:
+    field_limit = field_max_chars
+    while (
+        estimate_token_count(working.model_dump_json(), chars_per_token=chars_per_token) > budget
+        and field_limit > 80
+    ):
         field_limit = max(field_limit // 2, 80)
         working = truncate_evidence_bundle(working, max_chars=field_limit)
 
     return working
 
 
-def prepare_evidence_for_llm(evidence: EvidenceBundle) -> EvidenceBundle:
+def prepare_evidence_for_llm(
+    evidence: EvidenceBundle,
+    *,
+    field_max_chars: int = EVIDENCE_FIELD_MAX_CHARS,
+    token_budget: int = EVIDENCE_PROMPT_TOKEN_BUDGET,
+    chars_per_token: int = CHARS_PER_TOKEN_ESTIMATE,
+) -> EvidenceBundle:
     """
     Apply field truncation and token-budget trimming for LLM prompts.
 
     Args:
         evidence: Raw collected evidence.
+        field_max_chars: Maximum characters for free-text evidence fields.
+        token_budget: Maximum estimated tokens for serialized evidence JSON.
+        chars_per_token: Characters-per-token heuristic used for budgeting.
 
     Returns:
         Compact evidence bundle safe for model context windows.
     """
-    return apply_token_budget(evidence)
+    return apply_token_budget(
+        evidence,
+        budget=token_budget,
+        field_max_chars=field_max_chars,
+        chars_per_token=chars_per_token,
+    )
 
 
 def build_evidence_summary_text(evidence: EvidenceBundle) -> str:

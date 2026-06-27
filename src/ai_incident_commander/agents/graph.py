@@ -14,6 +14,7 @@ from ai_incident_commander.agents.investigation import (
     synthesize_rca,
 )
 from ai_incident_commander.config import Settings, get_settings
+from ai_incident_commander.llm.usage import track_investigation_llm_usage
 from ai_incident_commander.models.investigation import InvestigationState
 
 
@@ -132,5 +133,7 @@ async def run_investigation(
         "error_message": None,
     }
 
-    result = await graph.ainvoke(initial_state)
+    investigation_id = initial_state["investigation_id"]
+    with track_investigation_llm_usage(service=service, investigation_id=investigation_id):
+        result = await graph.ainvoke(initial_state)
     return result

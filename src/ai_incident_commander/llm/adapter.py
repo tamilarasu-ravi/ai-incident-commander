@@ -1,6 +1,7 @@
 """LLM adapter with OpenAI primary and Google Gemini fallback."""
 
 from pathlib import Path
+from typing import Literal
 
 import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -13,6 +14,7 @@ from ai_incident_commander.llm.evidence_context import (
     format_evidence_for_llm,
     prepare_evidence_for_llm,
 )
+from ai_incident_commander.llm.usage import ainvoke_with_usage_logging
 from ai_incident_commander.models.evidence import EvidenceBundle
 from ai_incident_commander.models.grounding import GroundingVerdict
 from ai_incident_commander.models.rca import RcaHypothesis
@@ -20,6 +22,7 @@ from ai_incident_commander.models.rca import RcaHypothesis
 logger = structlog.get_logger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+LlmPurpose = Literal["synthesis", "grounding"]
 
 
 def load_prompt(name: str) -> str:
@@ -39,12 +42,36 @@ def load_prompt(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def build_llm(settings: Settings | None = None) -> BaseChatModel:
+def _resolve_model_names(settings: Settings, purpose: LlmPurpose) -> tuple[str, str]:
+    """
+    Resolve OpenAI and Google model names for a given LLM purpose.
+
+    Args:
+        settings: Application settings loaded from the environment.
+        purpose: Whether the call is for synthesis or grounding validation.
+
+    Returns:
+        Tuple of OpenAI model name and Google model name.
+    """
+    if purpose == "grounding":
+        openai_model = settings.openai_grounding_model or settings.openai_model
+        google_model = settings.google_grounding_model or settings.google_model
+        return openai_model, google_model
+
+    return settings.openai_model, settings.google_model
+
+
+def build_llm(
+    settings: Settings | None = None,
+    *,
+    purpose: LlmPurpose = "synthesis",
+) -> BaseChatModel:
     """
     Build the primary LLM with Google Gemini fallback.
 
     Args:
         settings: Optional settings override; defaults to cached ``get_settings()``.
+        purpose: ``grounding`` may use cheaper provider models when configured.
 
     Returns:
         LangChain chat model with fallback configured.
@@ -56,11 +83,12 @@ def build_llm(settings: Settings | None = None) -> BaseChatModel:
     if not resolved.openai_api_key and not resolved.google_api_key:
         raise ValueError("OPENAI_API_KEY or GOOGLE_API_KEY is required for RCA synthesis")
 
+    openai_model, google_model = _resolve_model_names(resolved, purpose)
     models: list[BaseChatModel] = []
     if resolved.openai_api_key:
         models.append(
             ChatOpenAI(
-                model=resolved.openai_model,
+                model=openai_model,
                 api_key=resolved.openai_api_key,
                 temperature=0,
             )
@@ -68,7 +96,7 @@ def build_llm(settings: Settings | None = None) -> BaseChatModel:
     if resolved.google_api_key:
         models.append(
             ChatGoogleGenerativeAI(
-                model=resolved.google_model,
+                model=google_model,
                 google_api_key=resolved.google_api_key,
                 temperature=0,
             )
@@ -78,6 +106,25 @@ def build_llm(settings: Settings | None = None) -> BaseChatModel:
     if len(models) == 1:
         return primary
     return primary.with_fallbacks(models[1:])
+
+
+def _prepare_evidence(settings: Settings, evidence: EvidenceBundle) -> EvidenceBundle:
+    """
+    Compact evidence using environment-backed token budget settings.
+
+    Args:
+        settings: Application settings with evidence budget fields.
+        evidence: Raw collected investigation evidence.
+
+    Returns:
+        Evidence bundle trimmed for LLM prompts.
+    """
+    return prepare_evidence_for_llm(
+        evidence,
+        field_max_chars=settings.evidence_field_max_chars,
+        token_budget=settings.evidence_prompt_token_budget,
+        chars_per_token=settings.chars_per_token_estimate,
+    )
 
 
 async def synthesize_rca_hypothesis(
@@ -102,10 +149,11 @@ async def synthesize_rca_hypothesis(
         ValueError: If no LLM provider is configured.
         Exception: Propagates LLM provider errors after logging context.
     """
-    llm = build_llm(settings)
+    resolved = settings or get_settings()
+    llm = build_llm(resolved, purpose="synthesis")
     structured_llm = llm.with_structured_output(RcaHypothesis)
     system_prompt = load_prompt("rca_synthesis.md")
-    prepared = prepare_evidence_for_llm(evidence)
+    prepared = _prepare_evidence(resolved, evidence)
     user_content = (
         f"Service: {service}\n"
         f"Description: {description}\n\n"
@@ -116,11 +164,14 @@ async def synthesize_rca_hypothesis(
     log.info("rca_synthesis_started")
 
     try:
-        result = await structured_llm.ainvoke(
+        result, _usage = await ainvoke_with_usage_logging(
+            structured_llm,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_content),
-            ]
+            ],
+            operation="rca_synthesis",
+            service=service,
         )
     except Exception as error:
         log.error("rca_synthesis_failed", error=str(error))
@@ -155,10 +206,11 @@ async def validate_rca_grounding(
         ValueError: If no LLM provider is configured.
         Exception: Propagates LLM provider errors after logging context.
     """
-    llm = build_llm(settings)
+    resolved = settings or get_settings()
+    llm = build_llm(resolved, purpose="grounding")
     structured_llm = llm.with_structured_output(GroundingVerdict)
     system_prompt = load_prompt("grounding_validator.md")
-    prepared = prepare_evidence_for_llm(evidence)
+    prepared = _prepare_evidence(resolved, evidence)
     user_content = (
         f"Proposed RCA:\n{rca.model_dump_json(indent=2)}\n\n"
         f"Evidence summary:\n{format_evidence_for_llm(prepared, mode='summary')}"
@@ -168,11 +220,14 @@ async def validate_rca_grounding(
     log.info("grounding_validation_started")
 
     try:
-        result = await structured_llm.ainvoke(
+        result, _usage = await ainvoke_with_usage_logging(
+            structured_llm,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_content),
-            ]
+            ],
+            operation="grounding_validation",
+            service=rca.affected_service,
         )
     except Exception as error:
         log.error("grounding_validation_failed", error=str(error))

@@ -44,6 +44,11 @@ def make_settings():
             "datadog_site": "datadoghq.com",
             "datadog_log_index": "main",
             "evidence_lookback_hours": 2,
+            "evidence_field_max_chars": 500,
+            "evidence_prompt_token_budget": 6000,
+            "chars_per_token_estimate": 4,
+            "openai_grounding_model": "",
+            "google_grounding_model": "",
             "log_level": "info",
             "pagerduty_webhook_secret": "",
         }
