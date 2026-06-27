@@ -30,6 +30,16 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 
 > 📹 [3-minute demo video — link here]
 
+**Demo service names** (fixture-backed scenarios with predictable outcomes):
+
+| Service | Command example | Expected outcome |
+| ------- | ---------------- | ---------------- |
+| `checkout-service` | `/incident checkout-service "latency spike"` | RCA surfaced (~87% confidence) |
+| `payment-service` | `/incident payment-service "null deploy regression"` | Blocked by Eval 1 (low coverage) |
+| `auth-service` | `/incident auth-service "flaky integration test failure"` | Blocked by false-alarm guard |
+
+Other service names return an error unless live GitHub/Datadog evidence is configured. Stick to the three names above for judging and recording.
+
 ```
 PagerDuty webhook  ──or──  /incident checkout-service "latency spike"
        │                        │ (manual escalation / live demo)
@@ -302,7 +312,7 @@ Show PagerDuty auto-trigger in the demo video; use `/incident` as the reliable f
 - Slack **developer sandbox** with next-gen platform enabled
 - Slack app created via [api.slack.com](https://api.slack.com/apps) (manifest in `manifest.json`) — **no Slack CLI required**
 - API keys: GitHub, Jira, Datadog, OpenAI, Google AI
-- PostgreSQL 15+ (local Docker or Railway/Render managed instance)
+- PostgreSQL 15+ **optional** — omit `DATABASE_URL` to use the JSON file store (`.investigation_store.json`); use Docker Compose or a managed DB for full audit-trail persistence
 
 ### Installation
 
@@ -325,7 +335,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # Fill in tokens — see Environment Variables below
 
-# Run database migrations
+# Run database migrations (only when DATABASE_URL is set and PostgreSQL is running)
+# Skip this step if you omit DATABASE_URL — the app uses .investigation_store.json instead.
 alembic upgrade head
 
 # Run tests
@@ -380,9 +391,11 @@ docker compose exec app alembic upgrade head
 2. Select your **developer sandbox** workspace
 3. Paste contents of `manifest.json` → **Create** → **Install to Workspace**
 4. Copy **Bot Token** (`xoxb-...`) and **App-Level Token** (`xapp-...` with `connections:write`) into `.env`
-5. Create `#incidents` channel and invite the bot
+5. Create `#incidents` channel and invite the bot (or rely on `chat:write.public` in `manifest.json` to post without a manual invite)
 
 ### Environment Variables
+
+Copy `.env.example` to `.env`. All variables below are referenced at runtime:
 
 ```env
 # Slack
@@ -398,21 +411,35 @@ GOOGLE_API_KEY=...
 GOOGLE_MODEL=gemini-2.0-flash
 GOOGLE_GROUNDING_MODEL=gemini-2.0-flash  # optional; falls back to GOOGLE_MODEL
 
+# Database (optional — omit for JSON file store)
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/incident_commander
+
+# GitHub
+GITHUB_TOKEN=ghp_...
+GITHUB_REPO_OWNER=your-github-username
+GITHUB_REPO_NAME=your-demo-repo
+GITHUB_USE_MCP=true
+
+# Jira
+JIRA_API_TOKEN=...
+JIRA_EMAIL=you@example.com
+JIRA_BASE_URL=https://your-org.atlassian.net
+JIRA_PROJECT_KEY=SCRUM
+JIRA_ISSUE_TYPE=Task
+
+# Datadog
+DATADOG_API_KEY=...
+DATADOG_APP_KEY=...
+DATADOG_SITE=datadoghq.com        # or ap1.datadoghq.com
+DATADOG_LOG_INDEX=main
+
+# Evidence collection
+EVIDENCE_LOOKBACK_HOURS=2
+
 # Evidence compaction (LLM token budget)
 EVIDENCE_FIELD_MAX_CHARS=500
 EVIDENCE_PROMPT_TOKEN_BUDGET=6000
 CHARS_PER_TOKEN_ESTIMATE=4
-
-# Database (optional — omit for JSON file store)
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/incident_commander
-
-# Integrations
-GITHUB_TOKEN=ghp_...
-JIRA_API_TOKEN=...
-JIRA_BASE_URL=https://your-org.atlassian.net
-DATADOG_API_KEY=...
-DATADOG_APP_KEY=...
-DATADOG_SITE=datadoghq.com        # or datadoghq.eu
 
 # App
 INCIDENTS_CHANNEL_ID=C...
@@ -423,6 +450,8 @@ LOG_LEVEL=info
 ### Socket Mode vs HTTP events
 
 **Local development (recommended):** Socket Mode with `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`. FastAPI starts immediately; Socket Mode connects in a background thread — wait for `slack_socket_ready` in logs before running `/incident`.
+
+**Slack scopes (`manifest.json`):** `assistant:write` requires the `assistant_view` feature block (declared in `features`). It enables AI assistant surfaces and RTS `action_token` flows. `search:read.public` is required by Slack for `assistant.search.context` on bot tokens. Background investigations fall back to `conversations.history` when no `action_token` is available.
 
 **Production HTTP mode:** Set `SLACK_SIGNING_SECRET` and point Slack **Event Subscriptions** and **Interactivity** to `https://<host>/slack/events`. Do **not** also point the slash command Request URL at HTTP while using Socket Mode for buttons — approvals will miss the in-process store.
 
@@ -552,13 +581,14 @@ ai-incident-commander/
 │   │   └── routes/
 │   │       └── pagerduty.py      # PagerDuty webhook → graph invoke
 │   ├── config.py                 # Pydantic Settings (env vars)
-│   └── constants.py              # Eval thresholds, confidence weights
+│   ├── constants.py              # Eval thresholds, confidence weights
+│   └── prompts/
+│       ├── rca_synthesis.md
+│       └── grounding_validator.md
 ├── alembic/                      # Database migrations
 │   └── versions/
-├── src/ai_incident_commander/prompts/
-│   ├── rca_synthesis.md
-│   └── grounding_validator.md
 ├── tests/
+│   ├── conftest.py               # Shared fixtures and store isolation
 │   ├── test_evals.py             # All 3 scenarios from README
 │   └── fixtures.py               # Mock evidence bundles
 ├── manifest.json                 # Slack app manifest (api.slack.com) — scopes, slash commands, events
@@ -566,8 +596,7 @@ ai-incident-commander/
 ├── requirements.txt
 ├── Dockerfile                    # Local dev image (used by docker compose)
 ├── docker-compose.yml            # App + PostgreSQL for local development
-├── .dockerignore
-└── pyproject.toml
+└── .dockerignore
 ```
 
 ---

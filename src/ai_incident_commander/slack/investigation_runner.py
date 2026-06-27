@@ -107,10 +107,14 @@ def post_investigation_result(
                 pid=os.getpid(),
             )
 
+        show_server_pid = settings.log_level.lower() == "debug"
         response = client.chat_postMessage(
             channel=channel_id,
             text=build_rca_fallback_text(final_state),
-            blocks=build_rca_approval_blocks(final_state, server_pid=os.getpid()),
+            blocks=build_rca_approval_blocks(
+                final_state,
+                server_pid=os.getpid() if show_server_pid else None,
+            ),
         )
         message_ts = _extract_message_ts(response)
         if investigation_id and message_ts:

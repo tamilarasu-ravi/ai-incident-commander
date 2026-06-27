@@ -9,6 +9,23 @@
       "display_name": "Incident Commander",
       "always_online": true
     },
+    "assistant_view": {
+      "assistant_description": "Investigates production incidents, gathers evidence from GitHub, logs, and Jira, and surfaces a confidence-scored RCA for human approval.",
+      "suggested_prompts": [
+        {
+          "title": "Redis pool exhaustion",
+          "message": "/incident checkout-service latency spike"
+        },
+        {
+          "title": "Null deploy regression",
+          "message": "/incident payment-service null deploy regression"
+        },
+        {
+          "title": "Flaky test false alarm",
+          "message": "/incident auth-service flaky integration test failure"
+        }
+      ]
+    },
     "slash_commands": [
       {
         "command": "/incident",
@@ -24,10 +41,11 @@
         "channels:history",
         "channels:read",
         "chat:write",
+        "chat:write.public",
         "commands",
         "groups:history",
         "groups:read",
-        "assistant:read",
+        "assistant:write",
         "search:read.public"
       ]
     }

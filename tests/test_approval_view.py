@@ -51,6 +51,35 @@ def test_build_rca_approval_blocks_contains_actions(surfaced_state: Investigatio
     action_ids = {element["action_id"] for element in action_block["elements"]}
     assert action_ids == {ACTION_APPROVE, ACTION_REJECT, ACTION_SHOW_EVIDENCE}
 
+    approve_button = next(
+        element for element in action_block["elements"] if element["action_id"] == ACTION_APPROVE
+    )
+    assert "confirm" in approve_button
+
+
+def test_build_evidence_summary_pluralizes_prior_incidents() -> None:
+    """Evidence summary uses plural grammar for multiple prior incidents."""
+    from ai_incident_commander.models.evidence import PriorIncidentEvidence
+
+    bundle = REDIS_POOL_EXHAUSTION_BUNDLE.model_copy(
+        update={
+            "prior_incidents": [
+                PriorIncidentEvidence(
+                    incident_id="INC-1",
+                    summary="first",
+                    service="checkout-service",
+                ),
+                PriorIncidentEvidence(
+                    incident_id="INC-2",
+                    summary="second",
+                    service="checkout-service",
+                ),
+            ]
+        }
+    )
+    summary = build_evidence_summary(bundle)
+    assert "2 prior incident matches" in summary
+
 
 def test_build_rca_approval_blocks_shows_confidence(surfaced_state: InvestigationState) -> None:
     """RCA card displays confidence percentage."""

@@ -52,7 +52,8 @@ def build_evidence_summary(evidence: EvidenceBundle) -> str:
     return (
         f"{len(evidence.commits)} recent commits · "
         f"{len(evidence.log_clusters)} error log clusters · "
-        f"{len(evidence.prior_incidents)} prior incident match"
+        f"{len(evidence.prior_incidents)} prior incident "
+        f"{'match' if len(evidence.prior_incidents) == 1 else 'matches'}"
     )
 
 
@@ -213,6 +214,18 @@ def _build_card_blocks(
                     "text": {"type": "plain_text", "text": "Approve & Create Jira"},
                     "style": "primary",
                     "value": investigation_id,
+                    "confirm": {
+                        "title": {"type": "plain_text", "text": "Create Jira ticket?"},
+                        "text": {
+                            "type": "plain_text",
+                            "text": (
+                                "This approves the RCA and creates a Jira ticket. "
+                                "This action cannot be undone."
+                            ),
+                        },
+                        "confirm": {"type": "plain_text", "text": "Approve"},
+                        "deny": {"type": "plain_text", "text": "Cancel"},
+                    },
                 },
                 {
                     "type": "button",
