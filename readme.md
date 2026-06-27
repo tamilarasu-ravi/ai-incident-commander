@@ -374,7 +374,7 @@ docker compose down -v               # stop and remove volumes
 `DATABASE_URL` inside the `app` container is set by `docker-compose.yml` to point at the `db` service. When running **without** Docker, use `localhost` instead:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://incident:incident@localhost:5432/incident_commander
+DATABASE_URL=postgresql+asyncpg://incident:incident@localhost:5439/incident_commander
 ```
 
 After Alembic migrations are added:
@@ -412,7 +412,7 @@ GOOGLE_MODEL=gemini-2.0-flash
 GOOGLE_GROUNDING_MODEL=gemini-2.0-flash  # optional; falls back to GOOGLE_MODEL
 
 # Database (optional — omit for JSON file store)
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/incident_commander
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5439/incident_commander
 
 # GitHub
 GITHUB_TOKEN=ghp_...

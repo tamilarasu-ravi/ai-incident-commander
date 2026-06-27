@@ -82,8 +82,8 @@ def build_rca_approval_blocks(
 
     return _build_card_blocks(
         investigation_id=state.get("investigation_id", ""),
-        service=state["service"],
-        description=state["description"],
+        service=state.get("service", "unknown"),
+        description=state.get("description", ""),
         rca=rca,
         evidence=evidence,
         eval_result=eval_result,
@@ -103,7 +103,7 @@ def build_blocked_message_text(state: InvestigationState) -> str:
     """
     reason = state.get("block_reason") or state.get("error_message") or "Unknown reason."
     return (
-        f":no_entry: *Investigation blocked for `{state['service']}`*\n"
+        f":no_entry: *Investigation blocked for `{state.get('service', 'unknown')}`*\n"
         f"{reason}"
     )
 
@@ -119,7 +119,7 @@ def build_error_message_text(state: InvestigationState) -> str:
         Slack mrkdwn error message.
     """
     message = state.get("error_message") or "Investigation failed."
-    return f":warning: *Investigation error for `{state['service']}`*\n{message}"
+    return f":warning: *Investigation error for `{state.get('service', 'unknown')}`*\n{message}"
 
 
 def _build_card_blocks(
