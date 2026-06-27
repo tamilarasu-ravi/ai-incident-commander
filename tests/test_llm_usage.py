@@ -46,6 +46,23 @@ def test_log_llm_usage_emits_structured_event() -> None:
     assert summary["total_tokens"] == 50
 
 
+def test_log_llm_usage_includes_estimated_cost() -> None:
+    """Token usage logs include an approximate USD cost estimate."""
+    with patch("ai_incident_commander.llm.usage.logger") as mock_logger:
+        mock_logger.bind.return_value = mock_logger
+        summary = log_llm_usage(
+            operation="rca_synthesis",
+            usage_by_model={
+                "gpt-4.1": {"input_tokens": 1_000_000, "output_tokens": 0, "total_tokens": 1_000_000}
+            },
+            service="checkout-service",
+        )
+
+    assert summary["estimated_cost_usd"] == 2.0
+    mock_logger.info.assert_called_once()
+    assert mock_logger.info.call_args.kwargs["estimated_cost_usd"] == 2.0
+
+
 def test_track_investigation_llm_usage_logs_investigation_total() -> None:
     """Investigation context manager emits one summary after nested LLM calls."""
     with patch("ai_incident_commander.llm.usage.logger") as mock_logger:

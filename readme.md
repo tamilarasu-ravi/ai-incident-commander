@@ -22,7 +22,7 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 - [x] **Day 6:** PagerDuty webhook + Block Kit approval actions
 - [ ] **Day 7:** Demo video recorded; judge sandbox access granted
 
-**Hackathon build note:** Investigation and approval state is stored **in-memory** for this submission (`store/investigations.py`). Restarting the app clears pending RCAs. PostgreSQL dependencies in `docker-compose.yml` are scaffolding for post-hackathon persistence.
+**Hackathon build note:** Investigation state defaults to a **JSON file** on disk (`.investigation_store.json`) so Approve/Reject survive process restarts without PostgreSQL. Set `DATABASE_URL` to use PostgreSQL persistence (Alembic migrations in `alembic/versions/`). Deployments in evidence are still fixture-backed for demo reliability.
 
 ---
 
@@ -89,6 +89,7 @@ Jira ticket created with full RCA, evidence links, and timeline
                     │     Evaluation Engine      │
                     ├────────────────────────────┤
                     │ ✓ Evidence Coverage Check  │
+                    │ ✓ False-Alarm Guard        │
                     │ ✓ Hallucination Validator  │
                     │ ✓ Consistency Scorer       │
                     └────────┬───────────────────┘
@@ -122,8 +123,8 @@ START → collect_evidence → synthesize_rca → run_evals → [route]
 | ---- | -------------- |
 | `collect_evidence` | Parallel calls to GitHub, Datadog, Jira clients + RTS API |
 | `synthesize_rca` | LLM structured output → `RcaHypothesis` (Pydantic) |
-| `run_evals` | Coverage → grounding → consistency; compute confidence |
-| `surface_rca` | Post Block Kit card to `#incidents` |
+| `run_evals` | Coverage → false-alarm guard → grounding → consistency; compute confidence |
+| `surface_rca` | Mark investigation ready; Block Kit card posted by `slack/investigation_runner.py` |
 | `block` | Post blocked reason; no Jira ticket |
 
 ---
@@ -136,7 +137,7 @@ START → collect_evidence → synthesize_rca → run_evals → [route]
 | **LangChain** | LLM adapter, structured output, prompt templates, provider fallback |
 | **OpenAI** | Primary LLM (`langchain-openai` — RCA synthesis, grounding validator) |
 | **Google Gemini** | Fallback LLM (`langchain-google-genai` — used when OpenAI fails or rate-limits) |
-| **PostgreSQL** | Investigation persistence, eval audit trail, approval state |
+| **PostgreSQL** | Optional investigation persistence and eval audit trail |
 | **SQLAlchemy + Alembic** | ORM, migrations, connection pooling |
 | **Bolt for Python** | Slack slash commands, interactivity, Block Kit actions |
 | **FastAPI** | PagerDuty webhook + Slack HTTP events (production) |
@@ -157,7 +158,7 @@ Two entry points, same LangGraph pipeline:
 - **PagerDuty webhook (primary)** — `POST /webhooks/pagerduty` on FastAPI. Parses the incident payload and invokes `investigation_graph.ainvoke(...)`.
 - **`/incident <service> <description>` slash command (fallback)** — Bolt handler in `slack/handlers/slash.py`. Reliable live trigger for demos and judging.
 
-Both paths converge on the same graph. In-flight investigations are persisted in an **in-memory store** (keyed by `investigation_id`) so **Approve**, **Reject**, and **Show Evidence** work after async evidence collection completes. PostgreSQL persistence is planned but not wired in this hackathon build.
+Both paths converge on the same graph. In-flight investigations are stored in the **investigation store** (JSON file by default, PostgreSQL when `DATABASE_URL` is set) so **Approve**, **Reject**, and **Show Evidence** work after async evidence collection completes.
 
 ### 2. Evidence Collection
 
@@ -166,7 +167,7 @@ The `collect_evidence` node fans out in parallel:
 - **GitHub client** — commits from the past 2 hours via an in-repo **FastMCP** server (`mcp/github_server.py`); falls back to direct REST if MCP fails. Set `GITHUB_USE_MCP=false` to skip MCP.
 - **Datadog client** — error rate spikes, log clusters, and APM traces via direct REST (`httpx`).
 - **Jira client** — past incident tickets; creates the RCA ticket on human approval
-- **RTS API** (`search/rts.py`) — searches `#incidents` messages from the last 90 days, matching on `service` name plus error keywords from the alert description
+- **RTS API** (`search/rts.py`) — searches `#incidents` for prior context. Background investigations use `conversations.history` (bot token). The RTS `assistant.search.context` API is used when a Slack `action_token` is available from a message event.
 
 All results are assembled into an `EvidenceBundle` (Pydantic model).
 
@@ -184,7 +185,7 @@ The `synthesize_rca` node calls the LLM with structured output validation:
 }
 ```
 
-Prompts live in `prompts/` (version-controlled, not inline strings).
+Prompts live in `src/ai_incident_commander/prompts/` (version-controlled, not inline strings).
 
 ### LLM provider strategy
 
@@ -206,20 +207,25 @@ fallback = ChatGoogleGenerativeAI(model=settings.google_model, temperature=0)
 llm = primary.with_fallbacks([fallback])
 ```
 
+Grounding validation can use cheaper models via `OPENAI_GROUNDING_MODEL` / `GOOGLE_GROUNDING_MODEL`. All LLM calls log token usage and an approximate `estimated_cost_usd` via structlog.
+
 Grounding validator and consistency scorer always use `temperature=0`.
 
 ### 4. Evaluation Engine
 
-The `run_evals` node runs three checks before any RCA reaches a human. A failed eval blocks the RCA or penalizes confidence — the agent never self-approves.
+The `run_evals` node runs checks before any RCA reaches a human. A failed eval blocks the RCA or penalizes confidence — the agent never self-approves.
 
 **Eval 1 — Evidence Coverage**
 Checks that the RCA cites at minimum one commit, one log cluster, and one deployment or prior incident. Returns a float in `[0.0, 1.0]`. If `evidence_coverage < 0.6`, the graph routes to `block`.
+
+**False-alarm guard (deterministic)**
+Before any LLM eval runs, blocks investigations where evidence is test-only (flaky CI retries) and the alert description signals a false alarm. Also blocks when the alert cites production failure terms with no matching evidence.
 
 **Eval 2 — Hallucination Validator**
 A separate LLM call with strict grounding (`temperature=0`). Given only raw evidence, does the cited root cause appear? Outputs `grounding_score` of `0.0` (ungrounded) or `1.0` (grounded) with a citation. Ungrounded blocks ticket creation.
 
 **Eval 3 — Consistency Scorer**
-Runs `synthesize_rca` twice at `temperature=0`. `consistency` is a float in `[0.0, 1.0]` (1.0 = identical root causes). Divergence penalizes confidence and is surfaced to the reviewer.
+Re-runs `synthesize_rca` once and compares the root cause to the graph's first synthesis (`baseline_rca`). `consistency` is a float in `[0.0, 1.0]` (1.0 = identical root causes). Divergence penalizes confidence and is surfaced to the reviewer.
 
 **Confidence score — deterministic formula, not LLM-generated:**
 
@@ -247,9 +253,9 @@ No ticket is created without explicit human approval.
 | -------- | ----------------- | --------- | ----------- | ---------- | ------- |
 | Redis pool exhaustion | 100% | Grounded | 95% | **87%** | Surfaced for approval |
 | Null deploy (no root cause) | 40% | N/A | — | — | **Blocked by Eval 1** |
-| Flaky test false alarm | 60% | Ungrounded | 70% | — | **Blocked by Eval 2** |
+| Flaky test false alarm | 60% | N/A | — | — | **Blocked by false-alarm guard** |
 
-The third row is what matters: the system caught a hallucinated RCA before it reached a human.
+The third row is what matters: the system caught a test-only false alarm before it reached a human (no grounding LLM call).
 
 Run locally: `pytest tests/test_evals.py -v`
 
@@ -343,7 +349,7 @@ docker compose up --build
 | Service | URL |
 | ------- | --- |
 | App (health) | http://localhost:8000/health |
-| PostgreSQL | Internal only (`db:5432` from app container). Shell: `docker compose exec db psql -U incident -d incident_commander` |
+| PostgreSQL | Internal to compose network; host port `5439` for local tools |
 
 Useful commands:
 
@@ -387,10 +393,17 @@ SLACK_SIGNING_SECRET=...          # HTTP events mode (production)
 # LLM — primary: OpenAI, fallback: Google Gemini
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1
+OPENAI_GROUNDING_MODEL=gpt-4.1-mini   # optional; falls back to OPENAI_MODEL
 GOOGLE_API_KEY=...
 GOOGLE_MODEL=gemini-2.0-flash
+GOOGLE_GROUNDING_MODEL=gemini-2.0-flash  # optional; falls back to GOOGLE_MODEL
 
-# Database
+# Evidence compaction (LLM token budget)
+EVIDENCE_FIELD_MAX_CHARS=500
+EVIDENCE_PROMPT_TOKEN_BUDGET=6000
+CHARS_PER_TOKEN_ESTIMATE=4
+
+# Database (optional — omit for JSON file store)
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/incident_commander
 
 # Integrations
@@ -403,8 +416,17 @@ DATADOG_SITE=datadoghq.com        # or datadoghq.eu
 
 # App
 INCIDENTS_CHANNEL_ID=C...
+PAGERDUTY_WEBHOOK_SECRET=...       # required for /webhooks/pagerduty
 LOG_LEVEL=info
 ```
+
+### Socket Mode vs HTTP events
+
+**Local development (recommended):** Socket Mode with `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN`. FastAPI starts immediately; Socket Mode connects in a background thread — wait for `slack_socket_ready` in logs before running `/incident`.
+
+**Production HTTP mode:** Set `SLACK_SIGNING_SECRET` and point Slack **Event Subscriptions** and **Interactivity** to `https://<host>/slack/events`. Do **not** also point the slash command Request URL at HTTP while using Socket Mode for buttons — approvals will miss the in-process store.
+
+Startup validates Slack tokens, `INCIDENTS_CHANNEL_ID`, at least one LLM key, and configured integration credentials before the app accepts traffic.
 
 ### Python dependencies
 
@@ -477,7 +499,7 @@ alembic upgrade head
 uvicorn ai_incident_commander.server.main:api --host 0.0.0.0 --port $PORT
 ```
 
-See `railway.toml` (or `render.yaml`) for deploy config.
+See `Dockerfile` and `docker-compose.yml` for deploy scaffolding.
 
 ---
 
@@ -495,12 +517,16 @@ ai-incident-commander/
 │   │   ├── grounding.py          # Eval 2 — hallucination check
 │   │   └── consistency.py        # Eval 3 — dual-run consistency
 │   ├── llm/
-│   │   └── adapter.py            # OpenAI primary + Google Gemini fallback
+│   │   ├── adapter.py            # OpenAI primary + Google Gemini fallback
+│   │   ├── evidence_context.py   # Evidence compaction and token budgets
+│   │   ├── pricing.py            # Approximate USD cost estimates
+│   │   └── usage.py              # Per-call and per-investigation token logging
 │   ├── db/
 │   │   ├── session.py              # Async SQLAlchemy session factory
 │   │   ├── models.py             # ORM models (investigations, evals, approvals)
 │   │   └── repository.py         # Investigation CRUD
 │   ├── integrations/
+│   │   ├── credentials.py        # Startup credential validation
 │   │   ├── github.py             # Commits via MCP (with REST fallback)
 │   │   ├── github_mcp.py         # MCP wrapper for GitHub commits
 │   │   ├── datadog.py            # Logs, error clusters, APM
@@ -529,7 +555,7 @@ ai-incident-commander/
 │   └── constants.py              # Eval thresholds, confidence weights
 ├── alembic/                      # Database migrations
 │   └── versions/
-├── prompts/
+├── src/ai_incident_commander/prompts/
 │   ├── rca_synthesis.md
 │   └── grounding_validator.md
 ├── tests/
@@ -541,7 +567,7 @@ ai-incident-commander/
 ├── Dockerfile                    # Local dev image (used by docker compose)
 ├── docker-compose.yml            # App + PostgreSQL for local development
 ├── .dockerignore
-└── railway.toml
+└── pyproject.toml
 ```
 
 ---
@@ -584,7 +610,7 @@ ai-incident-commander/
 | 0:30–1:00 | Trigger `/incident` in Slack; agent announces investigation |
 | 1:00–1:45 | Evidence appears (commits, logs, prior incident via RTS) |
 | 1:45–2:15 | RCA card with confidence breakdown |
-| 2:15–2:45 | Second run: flaky scenario → Eval 2 blocks ungrounded RCA |
+| 2:15–2:45 | Second run: flaky scenario → false-alarm guard blocks before human review |
 | 2:45–3:00 | Approve → Jira ticket; closing line on human-in-the-loop |
 
 Record in your sandbox workspace, not localhost-only.

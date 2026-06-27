@@ -5,8 +5,8 @@ import pytest
 from ai_incident_commander.integrations.credentials import (
     validate_datadog_credentials,
     validate_github_credentials,
-    validate_integration_credentials,
     validate_jira_credentials,
+    validate_llm_credentials,
     validate_startup_credentials,
 )
 
@@ -94,6 +94,8 @@ def test_validate_startup_credentials_raises_on_invalid_github(
     settings = make_settings(
         slack_bot_token="xoxb-bot-token",
         slack_app_token="xapp-app-token",
+        incidents_channel_id="C123INCIDENT",
+        openai_api_key="sk-test-key",
         github_token="not-a-github-token",
         github_repo_owner="acme",
         github_repo_name="checkout-service",
@@ -112,6 +114,8 @@ def test_validate_startup_credentials_reports_all_invalid_secrets(
     settings = make_settings(
         slack_bot_token="xoxb-bot-token",
         slack_app_token="xoxb-bot-token",
+        incidents_channel_id="C123INCIDENT",
+        openai_api_key="sk-test-key",
         github_token="not-a-github-token",
         github_repo_owner="acme",
         github_repo_name="checkout-service",
@@ -132,7 +136,28 @@ def test_validate_startup_credentials_reports_all_invalid_secrets(
     assert "datadog:" in message
 
 
-def test_validate_integration_credentials_skips_unconfigured_integrations(make_settings) -> None:
-    """Startup validation ignores integrations with missing required fields."""
-    settings = make_settings()
-    validate_integration_credentials(settings)
+def test_validate_llm_credentials_requires_openai_prefix() -> None:
+    """OpenAI keys must use the sk- prefix."""
+    with pytest.raises(ValueError, match="sk-"):
+        validate_llm_credentials("not-an-openai-key", "")
+
+
+def test_validate_startup_credentials_requires_llm_and_channel_for_socket_mode(
+    make_settings,
+    monkeypatch,
+) -> None:
+    """Socket Mode startup requires incidents channel and at least one LLM key."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    settings = make_settings(
+        slack_bot_token="xoxb-bot-token",
+        slack_app_token="xapp-app-token",
+        incidents_channel_id="",
+        openai_api_key="",
+        google_api_key="",
+    )
+
+    with pytest.raises(ValueError, match="INCIDENTS_CHANNEL_ID") as exc_info:
+        validate_startup_credentials(settings)
+
+    message = str(exc_info.value)
+    assert "OPENAI_API_KEY or GOOGLE_API_KEY" in message

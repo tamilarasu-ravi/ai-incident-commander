@@ -161,41 +161,32 @@ def validate_datadog_credentials(api_key: str, app_key: str, site: str) -> None:
         )
 
 
-def validate_integration_credentials(settings: Settings) -> None:
+def validate_llm_credentials(openai_api_key: str, google_api_key: str) -> None:
     """
-    Validate configured integration credentials at application startup.
-
-    Skips validation during pytest and when an integration is not fully configured.
+    Validate LLM provider API key shape when keys are configured.
 
     Args:
-        settings: Application settings loaded from the environment.
+        openai_api_key: OpenAI API key from ``OPENAI_API_KEY``.
+        google_api_key: Google API key from ``GOOGLE_API_KEY``.
 
     Raises:
-        ValueError: If a configured integration has invalid credentials.
+        ValueError: If a configured key looks malformed.
     """
-    if "PYTEST_CURRENT_TEST" in os.environ:
-        return
+    cleaned_openai = openai_api_key.strip()
+    cleaned_google = google_api_key.strip()
 
-    if settings.is_github_configured:
-        validate_github_credentials(
-            settings.github_token,
-            settings.github_repo_owner,
-            settings.github_repo_name,
-        )
+    if cleaned_openai:
+        validate_ascii_secret(cleaned_openai, "OPENAI_API_KEY")
+        if not cleaned_openai.startswith("sk-"):
+            raise ValueError(
+                "OPENAI_API_KEY must start with 'sk-'. "
+                "Create a key at https://platform.openai.com/api-keys."
+            )
 
-    if settings.is_jira_configured:
-        validate_jira_credentials(
-            settings.jira_api_token,
-            settings.jira_email,
-            settings.jira_base_url,
-        )
-
-    if settings.is_datadog_configured:
-        validate_datadog_credentials(
-            settings.datadog_api_key,
-            settings.datadog_app_key,
-            settings.datadog_site,
-        )
+    if cleaned_google:
+        validate_ascii_secret(cleaned_google, "GOOGLE_API_KEY")
+        if len(cleaned_google) < 20:
+            raise ValueError("GOOGLE_API_KEY looks too short.")
 
 
 def validate_startup_credentials(settings: Settings) -> None:
@@ -223,11 +214,35 @@ def validate_startup_credentials(settings: Settings) -> None:
             validate_slack_tokens(settings.slack_bot_token, settings.slack_app_token)
         except ValueError as error:
             _record_startup_credential_error(errors, "slack", error)
+
+        if not settings.incidents_channel_id.strip():
+            _record_startup_credential_error(
+                errors,
+                "slack",
+                ValueError(
+                    "INCIDENTS_CHANNEL_ID is required when Socket Mode is enabled."
+                ),
+            )
+
+        if not settings.openai_api_key and not settings.google_api_key:
+            _record_startup_credential_error(
+                errors,
+                "llm",
+                ValueError(
+                    "OPENAI_API_KEY or GOOGLE_API_KEY is required for RCA investigations."
+                ),
+            )
     elif settings.slack_bot_token or settings.slack_app_token:
         message = (
             "SLACK_BOT_TOKEN and SLACK_APP_TOKEN must both be set for Socket Mode."
         )
         _record_startup_credential_error(errors, "slack", ValueError(message))
+
+    if settings.openai_api_key or settings.google_api_key:
+        try:
+            validate_llm_credentials(settings.openai_api_key, settings.google_api_key)
+        except ValueError as error:
+            _record_startup_credential_error(errors, "llm", error)
 
     if settings.is_github_configured:
         try:

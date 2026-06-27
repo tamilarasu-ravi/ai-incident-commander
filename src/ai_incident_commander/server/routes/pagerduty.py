@@ -143,14 +143,19 @@ async def pagerduty_webhook(request: Request) -> PagerDutyWebhookResponse:
         raise HTTPException(status_code=503, detail="INCIDENTS_CHANNEL_ID is not configured")
 
     raw_body = await request.body()
-    if settings.pagerduty_webhook_secret:
-        signature_header = request.headers.get(PAGERDUTY_SIGNATURE_HEADER, "")
-        if not verify_pagerduty_signature(
-            raw_body,
-            settings.pagerduty_webhook_secret,
-            signature_header,
-        ):
-            raise HTTPException(status_code=401, detail="Invalid PagerDuty signature")
+    if not settings.pagerduty_webhook_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="PAGERDUTY_WEBHOOK_SECRET is not configured",
+        )
+
+    signature_header = request.headers.get(PAGERDUTY_SIGNATURE_HEADER, "")
+    if not verify_pagerduty_signature(
+        raw_body,
+        settings.pagerduty_webhook_secret,
+        signature_header,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid PagerDuty signature")
 
     try:
         payload = json.loads(raw_body.decode("utf-8"))

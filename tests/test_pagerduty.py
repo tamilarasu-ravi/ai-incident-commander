@@ -79,8 +79,13 @@ def test_is_duplicate_pagerduty_event_tracks_ids() -> None:
 
 
 def test_pagerduty_webhook_accepts_valid_payload(make_settings) -> None:
-    """POST /webhooks/pagerduty returns accepted response."""
-    settings = make_settings(incidents_channel_id="C123INCIDENT", slack_bot_token="xoxb-test")
+    """POST /webhooks/pagerduty returns accepted response when signed."""
+    secret = "pagerduty-secret"
+    settings = make_settings(
+        incidents_channel_id="C123INCIDENT",
+        slack_bot_token="xoxb-test",
+        pagerduty_webhook_secret=secret,
+    )
     payload = {
         "event": {
             "id": "evt-accepted",
@@ -93,6 +98,8 @@ def test_pagerduty_webhook_accepts_valid_payload(make_settings) -> None:
             },
         }
     }
+    body = json.dumps(payload).encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
     with (
         patch("ai_incident_commander.server.routes.pagerduty.get_settings", return_value=settings),
@@ -102,7 +109,11 @@ def test_pagerduty_webhook_accepts_valid_payload(make_settings) -> None:
         ),
     ):
         client = TestClient(api)
-        response = client.post("/webhooks/pagerduty", json=payload)
+        response = client.post(
+            "/webhooks/pagerduty",
+            content=body,
+            headers={PAGERDUTY_SIGNATURE_HEADER: f"v1={digest}"},
+        )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -110,6 +121,29 @@ def test_pagerduty_webhook_accepts_valid_payload(make_settings) -> None:
         "service": "checkout-service",
         "description": "latency spike",
     }
+
+
+def test_pagerduty_webhook_rejects_when_secret_not_configured(make_settings) -> None:
+    """Unsigned PagerDuty webhooks are rejected when the secret is unset."""
+    settings = make_settings(incidents_channel_id="C123INCIDENT")
+    payload = {
+        "event": {
+            "id": "evt-unsigned",
+            "data": {
+                "title": "checkout-service latency spike",
+                "custom_details": {
+                    "service": "checkout-service",
+                    "description": "latency spike",
+                },
+            },
+        }
+    }
+
+    with patch("ai_incident_commander.server.routes.pagerduty.get_settings", return_value=settings):
+        client = TestClient(api)
+        response = client.post("/webhooks/pagerduty", json=payload)
+
+    assert response.status_code == 503
 
 
 def test_pagerduty_webhook_rejects_invalid_signature(make_settings) -> None:
@@ -146,7 +180,12 @@ def test_pagerduty_webhook_rejects_invalid_signature(make_settings) -> None:
 def test_pagerduty_webhook_deduplicates_retries(make_settings) -> None:
     """Duplicate PagerDuty event IDs return duplicate status without re-running."""
     reset_pagerduty_dedup_cache()
-    settings = make_settings(incidents_channel_id="C123INCIDENT", slack_bot_token="xoxb-test")
+    secret = "pagerduty-secret"
+    settings = make_settings(
+        incidents_channel_id="C123INCIDENT",
+        slack_bot_token="xoxb-test",
+        pagerduty_webhook_secret=secret,
+    )
     payload = {
         "event": {
             "id": "evt-retry",
@@ -159,6 +198,9 @@ def test_pagerduty_webhook_deduplicates_retries(make_settings) -> None:
             },
         }
     }
+    body = json.dumps(payload).encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    headers = {PAGERDUTY_SIGNATURE_HEADER: f"v1={digest}"}
 
     with (
         patch("ai_incident_commander.server.routes.pagerduty.get_settings", return_value=settings),
@@ -168,8 +210,8 @@ def test_pagerduty_webhook_deduplicates_retries(make_settings) -> None:
         ) as investigation_mock,
     ):
         client = TestClient(api)
-        first = client.post("/webhooks/pagerduty", json=payload)
-        second = client.post("/webhooks/pagerduty", json=payload)
+        first = client.post("/webhooks/pagerduty", content=body, headers=headers)
+        second = client.post("/webhooks/pagerduty", content=body, headers=headers)
 
     assert first.status_code == 200
     assert first.json()["status"] == "accepted"

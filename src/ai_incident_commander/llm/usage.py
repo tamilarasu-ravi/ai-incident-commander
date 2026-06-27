@@ -9,6 +9,8 @@ from typing import Any, Generator
 import structlog
 from langchain_core.callbacks import get_usage_metadata_callback
 
+from ai_incident_commander.llm.pricing import estimate_cost_usd
+
 logger = structlog.get_logger(__name__)
 
 _investigation_usage_records: ContextVar[list[dict[str, Any]] | None] = ContextVar(
@@ -69,12 +71,17 @@ def log_llm_usage(
         Summarized token usage for the operation.
     """
     summary = summarize_usage_metadata(usage_by_model)
+    estimated_cost_usd = estimate_cost_usd(usage_by_model)
     log = logger.bind(operation=operation)
     if service:
         log = log.bind(service=service)
 
     if summary["total_tokens"]:
-        log.info("llm_usage_recorded", **summary)
+        log.info(
+            "llm_usage_recorded",
+            estimated_cost_usd=estimated_cost_usd,
+            **summary,
+        )
     else:
         log.info(
             "llm_usage_unavailable",
@@ -88,10 +95,11 @@ def log_llm_usage(
                 "operation": operation,
                 **{key: summary[key] for key in ("input_tokens", "output_tokens", "total_tokens")},
                 "models": summary["models"],
+                "estimated_cost_usd": estimated_cost_usd,
             }
         )
 
-    return summary
+    return {**summary, "estimated_cost_usd": estimated_cost_usd}
 
 
 @contextmanager
@@ -121,6 +129,10 @@ def track_investigation_llm_usage(
             total_input = sum(int(record["input_tokens"]) for record in records)
             total_output = sum(int(record["output_tokens"]) for record in records)
             total_tokens = sum(int(record["total_tokens"]) for record in records)
+            total_cost = round(
+                sum(float(record.get("estimated_cost_usd", 0.0)) for record in records),
+                6,
+            )
             operations = [str(record["operation"]) for record in records]
 
             log = logger.bind(service=service, investigation_id=investigation_id)
@@ -131,6 +143,7 @@ def track_investigation_llm_usage(
                 input_tokens=total_input,
                 output_tokens=total_output,
                 total_tokens=total_tokens,
+                estimated_cost_usd=total_cost,
             )
 
 
