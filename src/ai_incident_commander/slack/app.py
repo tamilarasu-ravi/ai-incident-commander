@@ -15,6 +15,7 @@ from ai_incident_commander.slack.client import (
     create_slack_web_client,
     create_socket_mode_web_client,
 )
+from ai_incident_commander.slack.action_token_store import set_action_token
 from ai_incident_commander.slack.handlers.actions import register_action_handlers
 from ai_incident_commander.slack.handlers.slash import register_slash_handlers
 from ai_incident_commander.slack.tokens import validate_slack_tokens
@@ -74,7 +75,48 @@ def create_slack_app(settings: Settings | None = None) -> App:
     )
     register_slash_handlers(app, resolved)
     register_action_handlers(app, resolved)
+    _register_assistant_event_handlers(app)
     return app
+
+
+def _register_assistant_event_handlers(app: App) -> None:
+    """
+    Register handlers for Slack assistant thread events.
+
+    These events carry a short-lived ``action_token`` that enables the
+    primary RTS ``assistant.search.context`` path. Tokens are cached by
+    channel ID in ``action_token_store`` for use during evidence collection.
+
+    Args:
+        app: Configured Bolt application instance.
+    """
+
+    @app.event("assistant_thread_started")
+    def handle_assistant_thread_started(event: dict, logger) -> None:  # noqa: ANN001
+        thread = event.get("assistant_thread") or {}
+        context = thread.get("context") or {}
+        channel_id = context.get("channel_id") or thread.get("channel_id") or ""
+        action_token = context.get("action_token") or ""
+        if channel_id and action_token:
+            set_action_token(channel_id, action_token)
+            logger.debug(
+                "action_token_cached",
+                event="assistant_thread_started",
+                channel_id=channel_id,
+            )
+
+    @app.event("assistant_thread_context_changed")
+    def handle_assistant_thread_context_changed(event: dict, logger) -> None:  # noqa: ANN001
+        context = event.get("assistant_thread_context") or {}
+        channel_id = context.get("channel_id") or ""
+        action_token = context.get("action_token") or ""
+        if channel_id and action_token:
+            set_action_token(channel_id, action_token)
+            logger.debug(
+                "action_token_refreshed",
+                event="assistant_thread_context_changed",
+                channel_id=channel_id,
+            )
 
 
 def _is_pytest_running() -> bool:
@@ -212,6 +254,18 @@ def start_socket_mode(settings: Settings | None = None) -> None:
         pid=os.getpid(),
         hint="Socket Mode connects in the background; wait for slack_socket_ready",
     )
+
+
+def is_socket_mode_connected() -> bool:
+    """Return True when the Socket Mode WebSocket session is active."""
+    with _socket_handler_lock:
+        handler = _socket_handler
+    if handler is None:
+        return False
+    try:
+        return bool(handler.client.is_connected())
+    except Exception:
+        return False
 
 
 def stop_socket_mode() -> None:

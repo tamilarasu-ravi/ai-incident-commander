@@ -22,6 +22,7 @@ async def collect_live_evidence(
     description: str,
     settings: Settings,
     slack_client: WebClient | None = None,
+    action_token: str | None = None,
 ) -> EvidenceBundle:
     """
     Collect evidence from GitHub, Datadog, Jira, and Slack RTS in parallel.
@@ -68,7 +69,9 @@ async def collect_live_evidence(
     if rts_client.is_configured:
         tasks["rts"] = asyncio.create_task(
             _fetch_with_timeout(
-                rts_client.search_incident_context(service, description),
+                rts_client.search_incident_context(
+                    service, description, action_token=action_token
+                ),
                 "rts",
             )
         )

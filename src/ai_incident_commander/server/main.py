@@ -14,8 +14,9 @@ from ai_incident_commander.db.url import database_connection_hint, resolve_datab
 from ai_incident_commander.integrations.credentials import validate_startup_credentials
 from ai_incident_commander.logging_setup import configure_logging
 from ai_incident_commander.server.routes.pagerduty import router as pagerduty_router
-from ai_incident_commander.slack.app import get_slack_app, start_socket_mode, stop_socket_mode
-from ai_incident_commander.store.investigations import configure_investigation_store
+from ai_incident_commander.slack.app import get_slack_app, is_socket_mode_connected, start_socket_mode, stop_socket_mode
+from ai_incident_commander.store.postgres_store import PostgresInvestigationStore
+from ai_incident_commander.store.investigations import configure_investigation_store, get_investigation_store
 
 configure_logging(get_settings().log_level)
 
@@ -105,10 +106,37 @@ def health_check() -> dict[str, str]:
     """
     Return service health for Docker and load balancer probes.
 
+    Reports the active store backend, Socket Mode connection state, and
+    PagerDuty webhook configuration so operators can verify integrations
+    without digging through logs.
+
     Returns:
-        JSON object with ``status`` set to ``ok``.
+        JSON object with ``status``, ``db``, ``socket_mode``, and
+        ``pagerduty`` fields.
     """
-    return {"status": "ok"}
+    settings = get_settings()
+    store = get_investigation_store()
+
+    if isinstance(store, PostgresInvestigationStore):
+        db_status = "postgresql"
+    else:
+        db_status = "pickle"
+
+    if not settings.is_slack_socket_mode_ready:
+        socket_status = "not_configured"
+    elif is_socket_mode_connected():
+        socket_status = "connected"
+    else:
+        socket_status = "disconnected"
+
+    pagerduty_status = "configured" if settings.pagerduty_webhook_secret else "not_configured"
+
+    return {
+        "status": "ok",
+        "db": db_status,
+        "socket_mode": socket_status,
+        "pagerduty": pagerduty_status,
+    }
 
 
 if __name__ == "__main__":

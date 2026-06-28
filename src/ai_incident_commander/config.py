@@ -79,6 +79,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias="PAGERDUTY_WEBHOOK_SECRET",
     )
+    pagerduty_dedup_file: str = Field(
+        default="",
+        validation_alias="PAGERDUTY_DEDUP_FILE",
+    )
 
     @property
     def is_github_configured(self) -> bool:

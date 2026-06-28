@@ -51,6 +51,12 @@
     }
   },
   "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "assistant_thread_started",
+        "assistant_thread_context_changed"
+      ]
+    },
     "interactivity": {
       "is_enabled": true
     },

@@ -32,6 +32,7 @@ async def collect_evidence(
             service=service,
             description=description,
             settings=resolved,
+            action_token=state.get("action_token"),
         )
     except ValueError as error:
         return {

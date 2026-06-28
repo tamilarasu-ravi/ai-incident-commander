@@ -31,3 +31,6 @@ class InvestigationState(TypedDict, total=False):
     status: InvestigationStatus
     block_reason: str | None
     error_message: str | None
+    # Short-lived Slack RTS action token captured from assistant thread events.
+    # Enables the primary ``assistant.search.context`` search path when present.
+    action_token: str | None

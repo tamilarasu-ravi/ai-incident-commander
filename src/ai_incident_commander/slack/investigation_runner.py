@@ -8,6 +8,7 @@ from slack_sdk import WebClient
 from ai_incident_commander.agents.graph import run_investigation
 from ai_incident_commander.db.async_bridge import run_async
 from ai_incident_commander.config import Settings
+from ai_incident_commander.slack.action_token_store import get_action_token
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.slack.views.approval import (
     build_blocked_message_text,
@@ -59,8 +60,14 @@ def post_investigation_result(
     log.info("investigation_started")
 
     try:
+        action_token = get_action_token(channel_id)
         final_state = run_async(
-            run_investigation(service=service, description=description, settings=settings)
+            run_investigation(
+                service=service,
+                description=description,
+                settings=settings,
+                action_token=action_token,
+            )
         )
     except Exception:
         log.exception("investigation_failed")

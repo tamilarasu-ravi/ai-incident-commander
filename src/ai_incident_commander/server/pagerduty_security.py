@@ -1,17 +1,111 @@
-"""PagerDuty webhook signature verification and deduplication."""
+"""PagerDuty webhook signature verification and deduplication.
+
+Deduplication uses an in-memory OrderedDict that is optionally backed by a JSON
+file so that event IDs survive process restarts.  Set ``PAGERDUTY_DEDUP_FILE``
+in the environment (or ``.env``) to a writable path to enable persistence; when
+the variable is empty the cache is purely in-memory (original behaviour).
+
+File format::
+
+    {"<event_id>": <unix_timestamp_float>, ...}
+
+The file is read lazily on the first dedup check and written after every new
+entry is inserted.  Writes are atomic: content is flushed to a temp file first
+and then renamed over the target so a crash mid-write leaves the old file intact.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import os
+import tempfile
+import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 
 PAGERDUTY_SIGNATURE_HEADER = "X-PagerDuty-Signature"
 PAGERDUTY_SIGNATURE_PREFIX = "v1="
 MAX_TRACKED_EVENT_IDS = 1000
 
+_lock = threading.Lock()
 _seen_event_ids: OrderedDict[str, float] = OrderedDict()
+_loaded_from_disk: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _dedup_file_path() -> Path | None:
+    """Return the configured dedup file path, or None when not set."""
+    from ai_incident_commander.config import get_settings  # local import to avoid cycles
+
+    path_str = get_settings().pagerduty_dedup_file
+    return Path(path_str) if path_str else None
+
+
+def _load_from_disk(path: Path) -> None:
+    """Load previously seen event IDs from *path* into the in-memory cache.
+
+    Errors (missing file, corrupt JSON) are silently ignored so that a bad
+    cache file never prevents the webhook receiver from starting.
+    """
+    global _seen_event_ids
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data: dict[str, float] = json.loads(raw)
+        if not isinstance(data, dict):
+            return
+        for event_id, ts in data.items():
+            _seen_event_ids[str(event_id)] = float(ts)
+        # Trim to cap — oldest entries first.
+        while len(_seen_event_ids) > MAX_TRACKED_EVENT_IDS:
+            _seen_event_ids.popitem(last=False)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+        pass
+
+
+def _save_to_disk(path: Path) -> None:
+    """Atomically write the current dedup cache to *path*.
+
+    Errors are silently swallowed — a failed write means we might re-process
+    a duplicate after a restart, which is acceptable compared to crashing.
+    """
+    try:
+        data = dict(_seen_event_ids)
+        parent = path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        # Write to a temp file in the same directory then rename for atomicity.
+        fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".pd_dedup_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
+        os.replace(tmp_path, path)
+    except OSError:
+        pass
+
+
+def _ensure_loaded() -> None:
+    """Load the disk cache on first use (caller must hold ``_lock``)."""
+    global _loaded_from_disk
+    if _loaded_from_disk:
+        return
+    _loaded_from_disk = True
+    path = _dedup_file_path()
+    if path is not None:
+        _load_from_disk(path)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def verify_pagerduty_signature(
@@ -38,7 +132,7 @@ def verify_pagerduty_signature(
         candidate = part.strip()
         if not candidate.startswith(PAGERDUTY_SIGNATURE_PREFIX):
             continue
-        expected = candidate[len(PAGERDUTY_SIGNATURE_PREFIX) :]
+        expected = candidate[len(PAGERDUTY_SIGNATURE_PREFIX):]
         if hmac.compare_digest(computed, expected):
             return True
     return False
@@ -70,24 +164,44 @@ def is_duplicate_pagerduty_event(event_id: str) -> bool:
     """
     Return True when the same PagerDuty event ID was already accepted.
 
+    On the first call the disk cache (``PAGERDUTY_DEDUP_FILE``) is loaded so
+    that event IDs from before the last restart are also considered seen.
+
     Args:
         event_id: Stable event identifier from ``extract_pagerduty_event_id``.
 
     Returns:
-        True if this event was seen recently in-process.
+        True if this event was seen in-process or in the persisted cache.
     """
     if not event_id:
         return False
 
-    if event_id in _seen_event_ids:
-        return True
+    with _lock:
+        _ensure_loaded()
 
-    _seen_event_ids[event_id] = time.time()
-    while len(_seen_event_ids) > MAX_TRACKED_EVENT_IDS:
-        _seen_event_ids.popitem(last=False)
+        if event_id in _seen_event_ids:
+            return True
+
+        _seen_event_ids[event_id] = time.time()
+        while len(_seen_event_ids) > MAX_TRACKED_EVENT_IDS:
+            _seen_event_ids.popitem(last=False)
+
+        path = _dedup_file_path()
+        if path is not None:
+            _save_to_disk(path)
+
     return False
 
 
 def reset_pagerduty_dedup_cache() -> None:
-    """Clear the in-memory deduplication cache (used in tests)."""
-    _seen_event_ids.clear()
+    """Clear the deduplication cache and delete the backing file (used in tests)."""
+    global _loaded_from_disk
+    with _lock:
+        _seen_event_ids.clear()
+        _loaded_from_disk = False
+        path = _dedup_file_path()
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
