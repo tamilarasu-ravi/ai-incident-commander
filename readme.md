@@ -42,11 +42,11 @@ Set `DEMO_MODE=true` in `.env` before recording or judging. Full checklist: [`do
 
 **Demo service names** (fixture-backed scenarios with predictable outcomes):
 
-| Service | Assistant / slash example | Expected outcome |
-| ------- | ------------------------- | ---------------- |
-| `checkout-service` | `checkout-service latency spike` | RCA surfaced (~87% confidence) |
-| `payment-service` | `payment-service null deploy regression` | Blocked by Eval 1 (low coverage) |
-| `auth-service` | `auth-service flaky integration test failure` | Blocked by false-alarm guard |
+| Service            | Assistant / slash example                     | Expected outcome                 |
+| ------------------ | --------------------------------------------- | -------------------------------- |
+| `checkout-service` | `checkout-service latency spike`              | RCA surfaced (~87% confidence)   |
+| `payment-service`  | `payment-service null deploy regression`      | Blocked by Eval 1 (low coverage) |
+| `auth-service`     | `auth-service flaky integration test failure` | Blocked by false-alarm guard     |
 
 Other service names return an error unless live GitHub/Datadog evidence is configured. Stick to the three names above for judging and recording.
 
@@ -139,33 +139,33 @@ START → collect_evidence → synthesize_rca → run_evals → [route]
                                                           (human approve/reject via Bolt)
 ```
 
-| Node | Responsibility |
-| ---- | -------------- |
-| `collect_evidence` | Parallel calls to GitHub, Datadog, Jira clients + RTS API |
-| `synthesize_rca` | LLM structured output → `RcaHypothesis` (Pydantic) |
-| `run_evals` | Coverage → false-alarm guard → grounding → consistency; compute confidence |
-| `surface_rca` | Mark investigation ready; Block Kit card posted by `slack/investigation_runner.py` |
-| `block` | Post blocked reason; no Jira ticket |
+| Node               | Responsibility                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `collect_evidence` | Parallel calls to GitHub, Datadog, Jira clients + RTS API                          |
+| `synthesize_rca`   | LLM structured output → `RcaHypothesis` (Pydantic)                                 |
+| `run_evals`        | Coverage → false-alarm guard → grounding → consistency; compute confidence         |
+| `surface_rca`      | Mark investigation ready; Block Kit card posted by `slack/investigation_runner.py` |
+| `block`            | Post blocked reason; no Jira ticket                                                |
 
 ---
 
 ## Technologies Used
 
-| Technology | Role |
-| ---------- | ---- |
-| **LangGraph** | Investigation agent orchestration (`StateGraph`, conditional routing) |
-| **LangChain** | LLM adapter, structured output, prompt templates, provider fallback |
-| **OpenAI** | Primary LLM (`langchain-openai` — RCA synthesis, grounding validator) |
-| **Google Gemini** | Fallback LLM (`langchain-google-genai` — used when OpenAI fails or rate-limits) |
-| **PostgreSQL** | Optional investigation persistence and eval audit trail |
-| **SQLAlchemy + Alembic** | ORM, migrations, connection pooling |
-| **Bolt for Python** | Slack slash commands, interactivity, Block Kit actions |
-| **FastAPI** | PagerDuty webhook + Slack HTTP events (production) |
-| **Pydantic** | RCA schema, evidence bundles, eval results, settings |
-| **slack-sdk** | RTS API (`assistant.search.context`), Web API calls |
-| **MCP (Python SDK)** | GitHub commit evidence via in-repo FastMCP server (`mcp/github_server.py`) |
-| **structlog** | Structured JSON logging |
-| **pytest** | Eval scenario tests + unit tests |
+| Technology               | Role                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| **LangGraph**            | Investigation agent orchestration (`StateGraph`, conditional routing)           |
+| **LangChain**            | LLM adapter, structured output, prompt templates, provider fallback             |
+| **OpenAI**               | Primary LLM (`langchain-openai` — RCA synthesis, grounding validator)           |
+| **Google Gemini**        | Fallback LLM (`langchain-google-genai` — used when OpenAI fails or rate-limits) |
+| **PostgreSQL**           | Optional investigation persistence and eval audit trail                         |
+| **SQLAlchemy + Alembic** | ORM, migrations, connection pooling                                             |
+| **Bolt for Python**      | Slack slash commands, interactivity, Block Kit actions                          |
+| **FastAPI**              | PagerDuty webhook + Slack HTTP events (production)                              |
+| **Pydantic**             | RCA schema, evidence bundles, eval results, settings                            |
+| **slack-sdk**            | RTS API (`assistant.search.context`), Web API calls                             |
+| **MCP (Python SDK)**     | GitHub commit evidence via in-repo FastMCP server (`mcp/github_server.py`)      |
+| **structlog**            | Structured JSON logging                                                         |
+| **pytest**               | Eval scenario tests + unit tests                                                |
 
 ---
 
@@ -209,9 +209,9 @@ Prompts live in `src/ai_incident_commander/prompts/` (version-controlled, not in
 
 ### LLM provider strategy
 
-| Priority | Provider | Package | Default model |
-| -------- | -------- | ------- | ------------- |
-| **Primary** | OpenAI | `langchain-openai` | `gpt-4.1` |
+| Priority     | Provider      | Package                  | Default model      |
+| ------------ | ------------- | ------------------------ | ------------------ |
+| **Primary**  | OpenAI        | `langchain-openai`       | `gpt-4.1`          |
 | **Fallback** | Google Gemini | `langchain-google-genai` | `gemini-2.0-flash` |
 
 All LLM calls go through `llm/adapter.py` — a single adapter that:
@@ -269,11 +269,11 @@ No ticket is created without explicit human approval.
 
 ## Evaluation Results (Test Scenarios)
 
-| Scenario | Evidence Coverage | Grounding | Consistency | Confidence | Outcome |
-| -------- | ----------------- | --------- | ----------- | ---------- | ------- |
-| Redis pool exhaustion | 100% | Grounded | 95% | **87%** | Surfaced for approval |
-| Null deploy (no root cause) | 40% | N/A | — | — | **Blocked by Eval 1** |
-| Flaky test false alarm | 60% | N/A | — | — | **Blocked by false-alarm guard** |
+| Scenario                    | Evidence Coverage | Grounding | Consistency | Confidence | Outcome                          |
+| --------------------------- | ----------------- | --------- | ----------- | ---------- | -------------------------------- |
+| Redis pool exhaustion       | 100%              | Grounded  | 95%         | **87%**    | Surfaced for approval            |
+| Null deploy (no root cause) | 40%               | N/A       | —           | —          | **Blocked by Eval 1**            |
+| Flaky test false alarm      | 60%               | N/A       | —           | —          | **Blocked by false-alarm guard** |
 
 The third row is what matters: the system caught a test-only false alarm before it reached a human (no grounding LLM call).
 
@@ -283,15 +283,15 @@ Run locally: `pytest tests/test_evals.py -v`
 
 ## 7-Day Build Plan
 
-| Day | Goal | Exit criteria |
-| --- | ---- | ------------- |
-| **1** | Skeleton that runs | Bolt `/incident` posts to `#incidents` in sandbox |
-| **2** | LangGraph pipeline (mock) | Graph produces Block Kit RCA card with fixture evidence |
-| **3** | GitHub + Datadog live | Real commit and log data in `EvidenceBundle` |
-| **4** | Jira + RTS live | RCA cites a real prior incident ID from sandbox history |
-| **5** | Evaluation engine | All three `test_evals.py` scenarios pass |
-| **6** | Triggers + UI + PagerDuty | Both entry points work; Approve creates Jira ticket |
-| **7** | Demo hardening | Video recorded; judges invited; no new features after noon |
+| Day   | Goal                      | Exit criteria                                              |
+| ----- | ------------------------- | ---------------------------------------------------------- |
+| **1** | Skeleton that runs        | Bolt `/incident` posts to `#incidents` in sandbox          |
+| **2** | LangGraph pipeline (mock) | Graph produces Block Kit RCA card with fixture evidence    |
+| **3** | GitHub + Datadog live     | Real commit and log data in `EvidenceBundle`               |
+| **4** | Jira + RTS live           | RCA cites a real prior incident ID from sandbox history    |
+| **5** | Evaluation engine         | All three `test_evals.py` scenarios pass                   |
+| **6** | Triggers + UI + PagerDuty | Both entry points work; Approve creates Jira ticket        |
+| **7** | Demo hardening            | Video recorded; judges invited; no new features after noon |
 
 ---
 
@@ -367,10 +367,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
-| Service | URL |
-| ------- | --- |
-| App (health) | http://localhost:8000/health |
-| PostgreSQL | Internal to compose network; host port `5439` for local tools |
+| Service      | URL                                                           |
+| ------------ | ------------------------------------------------------------- |
+| App (health) | http://localhost:8000/health                                  |
+| PostgreSQL   | Internal to compose network; host port `5439` for local tools |
 
 Useful commands:
 
@@ -471,35 +471,35 @@ Startup validates Slack tokens, `INCIDENTS_CHANNEL_ID`, at least one LLM key, an
 
 Pinned in `requirements.txt`. Core stack:
 
-| Package | Purpose |
-| ------- | ------- |
-| `langgraph` | Investigation `StateGraph` orchestration |
-| `langchain-core` | LLM abstractions, structured output |
-| `langchain-openai` | Primary LLM — OpenAI (`ChatOpenAI`) |
-| `langchain-google-genai` | Fallback LLM — Google Gemini |
-| `sqlalchemy` | PostgreSQL ORM (async sessions) |
-| `asyncpg` | Async PostgreSQL driver |
-| `alembic` | Database migrations (versioned, reversible) |
-| `slack-bolt` | Slack event handlers, slash commands, Block Kit |
-| `slack-sdk` | Web API + RTS (`assistant.search.context`) |
-| `fastapi` | PagerDuty webhook + Slack HTTP events |
-| `uvicorn` | ASGI server |
-| `pydantic` | Models for RCA, evidence, eval results, settings |
-| `pydantic-settings` | `.env` loading |
-| `httpx` | Async HTTP for GitHub / Jira / Datadog clients |
-| `structlog` | Structured JSON logging |
-| `pytest` | Test runner |
-| `pytest-asyncio` | Async test support (`asyncio_mode = "auto"` set in `pyproject.toml`) |
+| Package                  | Purpose                                                              |
+| ------------------------ | -------------------------------------------------------------------- |
+| `langgraph`              | Investigation `StateGraph` orchestration                             |
+| `langchain-core`         | LLM abstractions, structured output                                  |
+| `langchain-openai`       | Primary LLM — OpenAI (`ChatOpenAI`)                                  |
+| `langchain-google-genai` | Fallback LLM — Google Gemini                                         |
+| `sqlalchemy`             | PostgreSQL ORM (async sessions)                                      |
+| `asyncpg`                | Async PostgreSQL driver                                              |
+| `alembic`                | Database migrations (versioned, reversible)                          |
+| `slack-bolt`             | Slack event handlers, slash commands, Block Kit                      |
+| `slack-sdk`              | Web API + RTS (`assistant.search.context`)                           |
+| `fastapi`                | PagerDuty webhook + Slack HTTP events                                |
+| `uvicorn`                | ASGI server                                                          |
+| `pydantic`               | Models for RCA, evidence, eval results, settings                     |
+| `pydantic-settings`      | `.env` loading                                                       |
+| `httpx`                  | Async HTTP for GitHub / Jira / Datadog clients                       |
+| `structlog`              | Structured JSON logging                                              |
+| `pytest`                 | Test runner                                                          |
+| `pytest-asyncio`         | Async test support (`asyncio_mode = "auto"` set in `pyproject.toml`) |
 
 ### PostgreSQL schema (overview)
 
-| Table | Purpose |
-| ----- | ------- |
-| `investigations` | One row per incident run (service, description, status, Slack thread ref) |
-| `evidence_snapshots` | Serialized `EvidenceBundle` at collection time |
-| `rca_hypotheses` | Structured RCA output + confidence score |
-| `eval_results` | Per-eval verdict, score, and explanation (audit trail) |
-| `approval_actions` | Approve / reject / show-evidence events with timestamps |
+| Table                | Purpose                                                                   |
+| -------------------- | ------------------------------------------------------------------------- |
+| `investigations`     | One row per incident run (service, description, status, Slack thread ref) |
+| `evidence_snapshots` | Serialized `EvidenceBundle` at collection time                            |
+| `rca_hypotheses`     | Structured RCA output + confidence score                                  |
+| `eval_results`       | Per-eval verdict, score, and explanation (audit trail)                    |
+| `approval_actions`   | Approve / reject / show-evidence events with timestamps                   |
 
 Migrations live in `alembic/versions/` — never modify schema by hand.
 
@@ -622,8 +622,8 @@ ai-incident-commander/
 
 ## Team
 
-| Name | Role |
-| ---- | ---- |
+| Name            | Role    |
+| --------------- | ------- |
 | Tamilarasu Ravi | Builder |
 
 ---
@@ -646,14 +646,14 @@ See **[`docs/HACKATHON_SUBMISSION.md`](docs/HACKATHON_SUBMISSION.md)** for the f
 
 ### Demo video script (~3 min)
 
-| Time | Beat |
-| ---- | ---- |
+| Time      | Beat                                                               |
+| --------- | ------------------------------------------------------------------ |
 | 0:00–0:30 | Problem: alert fires, engineer opens 4 tabs, RCA takes 45+ minutes |
-| 0:30–1:00 | Open **Assistant** → trigger `checkout-service latency spike` |
-| 1:00–1:45 | Evidence (MCP commits, logs, prior incident via **RTS**) |
-| 1:45–2:15 | RCA card with confidence breakdown |
-| 2:15–2:45 | Assistant: flaky scenario → false-alarm guard blocks |
-| 2:45–3:00 | Approve → Jira ticket; human-in-the-loop closing |
+| 0:30–1:00 | Open **Assistant** → trigger `checkout-service latency spike`      |
+| 1:00–1:45 | Evidence (MCP commits, logs, prior incident via **RTS**)           |
+| 1:45–2:15 | RCA card with confidence breakdown                                 |
+| 2:15–2:45 | Assistant: flaky scenario → false-alarm guard blocks               |
+| 2:45–3:00 | Approve → Jira ticket; human-in-the-loop closing                   |
 
 Record in your sandbox workspace, not localhost-only.
 

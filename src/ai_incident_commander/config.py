@@ -18,9 +18,13 @@ class Settings(BaseSettings):
 
     slack_bot_token: str = Field(default="", validation_alias="SLACK_BOT_TOKEN")
     slack_app_token: str = Field(default="", validation_alias="SLACK_APP_TOKEN")
-    slack_signing_secret: str = Field(default="", validation_alias="SLACK_SIGNING_SECRET")
+    slack_signing_secret: str = Field(
+        default="", validation_alias="SLACK_SIGNING_SECRET"
+    )
 
-    incidents_channel_id: str = Field(default="", validation_alias="INCIDENTS_CHANNEL_ID")
+    incidents_channel_id: str = Field(
+        default="", validation_alias="INCIDENTS_CHANNEL_ID"
+    )
 
     openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4.1", validation_alias="OPENAI_MODEL")
@@ -88,7 +92,9 @@ class Settings(BaseSettings):
     @property
     def is_github_configured(self) -> bool:
         """Return True when GitHub token and repository coordinates are set."""
-        return bool(self.github_token and self.github_repo_owner and self.github_repo_name)
+        return bool(
+            self.github_token and self.github_repo_owner and self.github_repo_name
+        )
 
     @property
     def is_datadog_configured(self) -> bool:
