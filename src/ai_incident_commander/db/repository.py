@@ -171,7 +171,11 @@ async def upsert_investigation(
 
     await session.flush()
     refreshed = await _get_investigation_row(session, investigation_id)
-    assert refreshed is not None
+    if refreshed is None:
+        raise RuntimeError(
+            f"upsert_investigation: row {investigation_id!r} missing after flush — "
+            "this is a bug in the ORM session state"
+        )
     return row_to_record(refreshed)
 
 

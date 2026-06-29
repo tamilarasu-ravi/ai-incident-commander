@@ -7,9 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# libpq headers/libs for asyncpg; gcc for any native wheel builds
+# libpq headers/libs for asyncpg; gcc for any native wheel builds; redis-server for in-container queue/cache
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpq5 libpq-dev gcc \
+    && apt-get install -y --no-install-recommends libpq5 libpq-dev gcc redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt pyproject.toml ./
@@ -19,8 +19,11 @@ RUN pip install --upgrade pip \
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
-RUN pip install -e .
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN pip install -e . \
+    && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "ai_incident_commander.server.main:api", "--host", "0.0.0.0", "--port", "8000"]

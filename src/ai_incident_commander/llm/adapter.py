@@ -18,6 +18,7 @@ from ai_incident_commander.llm.usage import ainvoke_with_usage_logging
 from ai_incident_commander.models.evidence import EvidenceBundle
 from ai_incident_commander.models.grounding import GroundingVerdict
 from ai_incident_commander.models.rca import RcaHypothesis
+from ai_incident_commander.ops.metrics import is_rate_limit_error, record_llm_rate_limit_error
 
 logger = structlog.get_logger(__name__)
 
@@ -234,8 +235,6 @@ async def validate_rca_grounding(
             service=rca.affected_service,
         )
     except Exception as error:
-        from ai_incident_commander.ops.metrics import is_rate_limit_error, record_llm_rate_limit_error
-
         if is_rate_limit_error(error):
             record_llm_rate_limit_error()
         log.error("grounding_validation_failed", error=str(error))

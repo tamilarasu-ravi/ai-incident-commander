@@ -15,8 +15,11 @@ from ai_incident_commander.ops.investigation_queue import (
 
 def test_in_process_queue_executes_job(monkeypatch) -> None:
     """Queued jobs are executed by background worker threads."""
-    monkeypatch.delenv("REDIS_URL", raising=False)
+    from ai_incident_commander.cache.redis_client import reset_redis_client
+
+    monkeypatch.setenv("REDIS_URL", "")
     get_settings.cache_clear()
+    reset_redis_client()
 
     completed: list[str] = []
 

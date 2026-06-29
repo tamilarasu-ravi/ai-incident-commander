@@ -117,3 +117,68 @@ def test_process_reject_marks_investigation_rejected(make_settings) -> None:
     assert record is not None
     assert record.approval_status == "rejected"
     client.chat_update.assert_called_once()
+
+
+def test_process_approve_store_miss_posts_ephemeral(make_settings) -> None:
+    """Approve click for unknown investigation_id sends ephemeral 'not found'."""
+    settings: Settings = make_settings(
+        jira_api_token=TEST_JIRA_API_TOKEN,
+        jira_email="you@example.com",
+        jira_base_url="https://example.atlassian.net",
+    )
+    client = MagicMock()
+
+    _process_approve(
+        client=client,
+        settings=settings,
+        investigation_id="inv-does-not-exist",
+        actor_id="U123",
+        channel_id="C123",
+        message_ts="111.222",
+    )
+
+    client.chat_update.assert_not_called()
+    client.chat_postEphemeral.assert_called_once()
+    assert "not found" in client.chat_postEphemeral.call_args.kwargs["text"].lower()
+
+
+def test_process_reject_store_miss_posts_ephemeral(make_settings) -> None:
+    """Reject click for unknown investigation_id sends ephemeral 'not found'."""
+    settings: Settings = make_settings()
+    client = MagicMock()
+
+    _process_reject(
+        client=client,
+        settings=settings,
+        investigation_id="inv-does-not-exist",
+        actor_id="U123",
+        channel_id="C123",
+        message_ts="111.222",
+    )
+
+    client.chat_update.assert_not_called()
+    client.chat_postEphemeral.assert_called_once()
+    assert "not found" in client.chat_postEphemeral.call_args.kwargs["text"].lower()
+
+
+def test_process_reject_double_reject_is_idempotent(make_settings) -> None:
+    """Second reject click sends ephemeral 'already rejected' without updating the card."""
+    settings: Settings = make_settings()
+    store = get_investigation_store()
+    store.save("inv-123", _surfaced_state(), channel_id="C123", message_ts="111.222")
+    store.mark_rejected("inv-123")
+
+    client = MagicMock()
+
+    _process_reject(
+        client=client,
+        settings=settings,
+        investigation_id="inv-123",
+        actor_id="U123",
+        channel_id="C123",
+        message_ts="111.222",
+    )
+
+    client.chat_update.assert_not_called()
+    client.chat_postEphemeral.assert_called_once()
+    assert "already" in client.chat_postEphemeral.call_args.kwargs["text"].lower()

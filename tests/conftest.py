@@ -79,10 +79,12 @@ def clear_investigation_store(monkeypatch, tmp_path):
 
     from ai_incident_commander.integrations.circuit_breaker import reset_circuit_breakers
     from ai_incident_commander.integrations.evidence_cache import clear_evidence_cache
+    from ai_incident_commander.cache.redis_client import reset_redis_client
     from ai_incident_commander.ops.investigation_queue import stop_investigation_workers
 
     clear_evidence_cache()
     reset_circuit_breakers()
+    reset_redis_client()
     stop_investigation_workers()
 
     store_file = tmp_path / "investigations.json"
@@ -97,5 +99,6 @@ def clear_investigation_store(monkeypatch, tmp_path):
     reset_pagerduty_dedup_cache()
     clear_evidence_cache()
     reset_circuit_breakers()
+    reset_redis_client()
     stop_investigation_workers()
     get_settings.cache_clear()
