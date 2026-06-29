@@ -198,7 +198,7 @@ def start_socket_mode(settings: Settings | None = None) -> None:
         return
 
     resolved = settings or get_settings()
-    if not resolved.is_slack_socket_mode_ready:
+    if not resolved.should_start_socket_mode:
         return
 
     with _socket_handler_lock:

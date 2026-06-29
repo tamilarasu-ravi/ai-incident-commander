@@ -189,6 +189,29 @@ def validate_llm_credentials(openai_api_key: str, google_api_key: str) -> None:
             raise ValueError("GOOGLE_API_KEY looks too short.")
 
 
+def validate_production_requirements(settings: Settings) -> None:
+    """
+    Enforce production infrastructure requirements at startup.
+
+    Args:
+        settings: Application settings loaded from the environment.
+
+    Raises:
+        ValueError: When production mode requires PostgreSQL and it is missing.
+    """
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+
+    if not settings.is_production or not settings.require_postgres_in_production:
+        return
+
+    if not settings.is_database_configured:
+        raise ValueError(
+            "DATABASE_URL is required when APP_ENV=production. "
+            "Set REQUIRE_POSTGRES_IN_PRODUCTION=false to disable this check."
+        )
+
+
 def validate_startup_credentials(settings: Settings) -> None:
     """
     Validate Slack and integration credentials before the application starts.
@@ -205,11 +228,13 @@ def validate_startup_credentials(settings: Settings) -> None:
     if "PYTEST_CURRENT_TEST" in os.environ:
         return
 
+    validate_production_requirements(settings)
+
     from ai_incident_commander.slack.tokens import validate_slack_tokens
 
     errors: list[str] = []
 
-    if settings.is_slack_socket_mode_ready:
+    if settings.should_start_socket_mode:
         try:
             validate_slack_tokens(settings.slack_bot_token, settings.slack_app_token)
         except ValueError as error:

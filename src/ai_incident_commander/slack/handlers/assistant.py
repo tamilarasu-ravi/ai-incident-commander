@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import threading
 from typing import Any, Callable
 
 import structlog
@@ -18,7 +17,7 @@ from ai_incident_commander.slack.incident_parse import (
     build_investigation_message,
     parse_incident_trigger,
 )
-from ai_incident_commander.slack.investigation_runner import post_investigation_result
+from ai_incident_commander.slack.investigation_runner import submit_investigation
 
 logger = structlog.get_logger(__name__)
 
@@ -155,21 +154,14 @@ def register_assistant_handlers(app: App, settings: Settings) -> None:
             + f"\n\nResults will also appear in <#{settings.incidents_channel_id}>."
         )
 
-        thread = threading.Thread(
-            target=post_investigation_result,
-            kwargs={
-                "client": client,
-                "channel_id": settings.incidents_channel_id,
-                "service": service,
-                "description": description,
-                "settings": settings,
-                "action_token": action_token,
-                "assistant_thread": (assistant_channel_id, assistant_thread_ts),
-            },
-            name=f"assistant-investigation-{service}",
-            daemon=True,
+        submit_investigation(
+            channel_id=settings.incidents_channel_id,
+            service=service,
+            description=description,
+            settings=settings,
+            action_token=action_token,
+            assistant_thread=(assistant_channel_id, assistant_thread_ts),
         )
-        thread.start()
 
     app.assistant(assistant)
 

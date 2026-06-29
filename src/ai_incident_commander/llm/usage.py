@@ -10,6 +10,7 @@ import structlog
 from langchain_core.callbacks import get_usage_metadata_callback
 
 from ai_incident_commander.llm.pricing import estimate_cost_usd
+from ai_incident_commander.ops.metrics import is_rate_limit_error, record_llm_rate_limit_error
 
 logger = structlog.get_logger(__name__)
 
@@ -167,10 +168,15 @@ async def ainvoke_with_usage_logging(
         Tuple of invoke result and summarized usage metadata.
     """
     with get_usage_metadata_callback() as usage_callback:
-        result = await runnable.ainvoke(
-            messages,
-            config={"callbacks": [usage_callback]},
-        )
+        try:
+            result = await runnable.ainvoke(
+                messages,
+                config={"callbacks": [usage_callback]},
+            )
+        except Exception as error:
+            if is_rate_limit_error(error):
+                record_llm_rate_limit_error()
+            raise
 
     usage_summary = log_llm_usage(
         operation=operation,

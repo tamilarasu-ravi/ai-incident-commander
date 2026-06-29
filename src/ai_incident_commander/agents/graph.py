@@ -104,6 +104,7 @@ async def run_investigation(
     description: str,
     settings: Settings | None = None,
     action_token: str | None = None,
+    investigation_id: str | None = None,
 ) -> InvestigationState:
     """
     Execute the full investigation pipeline for a service incident.
@@ -115,6 +116,7 @@ async def run_investigation(
         action_token: Optional Slack RTS action token captured from an
             ``assistant_thread_started`` event; enables the primary
             ``assistant.search.context`` search path.
+        investigation_id: Optional stable investigation ID for idempotent runs.
 
     Returns:
         Final investigation state after graph completion.
@@ -125,8 +127,10 @@ async def run_investigation(
         else get_investigation_graph()
     )
 
+    resolved_investigation_id = investigation_id or str(uuid.uuid4())
+
     initial_state: InvestigationState = {
-        "investigation_id": str(uuid.uuid4()),
+        "investigation_id": resolved_investigation_id,
         "service": service,
         "description": description,
         "evidence": None,

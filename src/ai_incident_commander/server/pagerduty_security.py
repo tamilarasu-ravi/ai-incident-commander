@@ -166,6 +166,7 @@ def is_duplicate_pagerduty_event(event_id: str) -> bool:
 
     On the first call the disk cache (``PAGERDUTY_DEDUP_FILE``) is loaded so
     that event IDs from before the last restart are also considered seen.
+    When ``REDIS_URL`` is configured, Redis is used for cross-process dedup.
 
     Args:
         event_id: Stable event identifier from ``extract_pagerduty_event_id``.
@@ -175,6 +176,9 @@ def is_duplicate_pagerduty_event(event_id: str) -> bool:
     """
     if not event_id:
         return False
+
+    if _is_duplicate_in_redis(event_id):
+        return True
 
     with _lock:
         _ensure_loaded()
@@ -191,6 +195,30 @@ def is_duplicate_pagerduty_event(event_id: str) -> bool:
             _save_to_disk(path)
 
     return False
+
+
+PAGERDUTY_DEDUP_REDIS_PREFIX = "pagerduty:dedup:"
+
+
+def _is_duplicate_in_redis(event_id: str) -> bool:
+    """
+    Return True when Redis reports the PagerDuty event ID was already seen.
+
+    Args:
+        event_id: Stable PagerDuty event identifier.
+
+    Returns:
+        Whether the event is a duplicate according to Redis ``SET NX``.
+    """
+    from ai_incident_commander.cache.redis_client import get_redis_client
+
+    client = get_redis_client()
+    if client is None:
+        return False
+
+    key = f"{PAGERDUTY_DEDUP_REDIS_PREFIX}{event_id}"
+    was_inserted = client.set(key, "1", nx=True, ex=86_400)
+    return not bool(was_inserted)
 
 
 def reset_pagerduty_dedup_cache() -> None:

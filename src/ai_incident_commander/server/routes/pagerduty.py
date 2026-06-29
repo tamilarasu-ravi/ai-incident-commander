@@ -15,7 +15,7 @@ from ai_incident_commander.server.pagerduty_security import (
     verify_pagerduty_signature,
 )
 from ai_incident_commander.slack.client import create_slack_web_client
-from ai_incident_commander.slack.investigation_runner import post_investigation_result
+from ai_incident_commander.slack.investigation_runner import submit_investigation
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -89,6 +89,7 @@ def _run_pagerduty_investigation(
     service: str,
     description: str,
     settings: Settings,
+    event_id: str,
 ) -> None:
     """
     Announce and investigate a PagerDuty incident in the incidents channel.
@@ -97,6 +98,7 @@ def _run_pagerduty_investigation(
         service: Affected service name.
         description: Incident description from PagerDuty.
         settings: Application settings.
+        event_id: PagerDuty event ID used as an idempotency key.
     """
     if not settings.incidents_channel_id or not settings.slack_bot_token:
         return
@@ -115,12 +117,12 @@ def _run_pagerduty_investigation(
     except Exception:
         return
 
-    post_investigation_result(
-        client=client,
+    submit_investigation(
         channel_id=settings.incidents_channel_id,
         service=service,
         description=description,
         settings=settings,
+        idempotency_key=event_id or None,
     )
 
 
@@ -184,7 +186,7 @@ async def pagerduty_webhook(request: Request) -> PagerDutyWebhookResponse:
 
     thread = threading.Thread(
         target=_run_pagerduty_investigation,
-        args=(service, description, settings),
+        args=(service, description, settings, event_id),
         name=f"pagerduty-{event_id or service}",
         daemon=True,
     )

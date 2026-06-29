@@ -71,9 +71,19 @@ def clear_investigation_store(monkeypatch, tmp_path):
     )
 
     monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("EVIDENCE_CACHE_ENABLED", "false")
+    monkeypatch.setenv("REDIS_URL", "")
     get_settings.cache_clear()
     reset_database_runtime()
     reset_pagerduty_dedup_cache()
+
+    from ai_incident_commander.integrations.circuit_breaker import reset_circuit_breakers
+    from ai_incident_commander.integrations.evidence_cache import clear_evidence_cache
+    from ai_incident_commander.ops.investigation_queue import stop_investigation_workers
+
+    clear_evidence_cache()
+    reset_circuit_breakers()
+    stop_investigation_workers()
 
     store_file = tmp_path / "investigations.json"
     monkeypatch.setenv("INVESTIGATION_STORE_FILE", str(store_file))
@@ -85,4 +95,7 @@ def clear_investigation_store(monkeypatch, tmp_path):
     reset_investigation_store()
     reset_database_runtime()
     reset_pagerduty_dedup_cache()
+    clear_evidence_cache()
+    reset_circuit_breakers()
+    stop_investigation_workers()
     get_settings.cache_clear()

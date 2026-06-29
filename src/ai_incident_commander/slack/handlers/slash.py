@@ -1,7 +1,6 @@
 """Slash command handlers for incident escalation."""
 
 import os
-import threading
 
 import structlog
 from slack_bolt import App
@@ -15,35 +14,9 @@ from ai_incident_commander.slack.incident_parse import (
     build_investigation_message,
     parse_incident_command,
 )
-from ai_incident_commander.slack.investigation_runner import post_investigation_result
+from ai_incident_commander.slack.investigation_runner import submit_investigation
 
 logger = structlog.get_logger(__name__)
-
-
-def _post_investigation_result(
-    client: WebClient,
-    channel_id: str,
-    service: str,
-    description: str,
-    settings: Settings,
-) -> None:
-    """
-    Run the investigation graph and post the resulting Slack message.
-
-    Args:
-        client: Slack Web API client.
-        channel_id: Target incidents channel ID.
-        service: Affected service name.
-        description: Incident description.
-        settings: Application settings for LLM configuration.
-    """
-    post_investigation_result(
-        client=client,
-        channel_id=channel_id,
-        service=service,
-        description=description,
-        settings=settings,
-    )
 
 
 def register_slash_handlers(app: App, settings: Settings) -> None:
@@ -117,19 +90,12 @@ def register_slash_handlers(app: App, settings: Settings) -> None:
             )
             return
 
-        thread = threading.Thread(
-            target=_post_investigation_result,
-            args=(
-                client,
-                settings.incidents_channel_id,
-                service,
-                description,
-                settings,
-            ),
-            name=f"investigation-{service}",
-            daemon=True,
+        submit_investigation(
+            channel_id=settings.incidents_channel_id,
+            service=service,
+            description=description,
+            settings=settings,
         )
-        thread.start()
 
         respond(
             response_type="ephemeral",

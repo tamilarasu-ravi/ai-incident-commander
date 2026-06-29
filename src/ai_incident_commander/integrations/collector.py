@@ -8,6 +8,16 @@ from slack_sdk import WebClient
 from ai_incident_commander.config import Settings
 from ai_incident_commander.constants import INTEGRATION_FETCH_TIMEOUT_SECONDS
 from ai_incident_commander.fixtures.mock_evidence import get_fixture_evidence
+from ai_incident_commander.integrations.circuit_breaker import (
+    CircuitOpenError,
+    preflight_integration,
+    record_integration_failure,
+    record_integration_success,
+)
+from ai_incident_commander.integrations.evidence_cache import (
+    get_cached_evidence,
+    set_cached_evidence,
+)
 from ai_incident_commander.integrations.datadog import DatadogClient
 from ai_incident_commander.integrations.github import GitHubClient
 from ai_incident_commander.integrations.jira import JiraClient
@@ -42,6 +52,10 @@ async def collect_live_evidence(
     Raises:
         ValueError: If no evidence could be collected from any source.
     """
+    cached = get_cached_evidence(service, description)
+    if cached is not None:
+        return EvidenceBundle.model_validate(cached)
+
     github_client = GitHubClient(settings)
     datadog_client = DatadogClient(settings)
     jira_client = JiraClient(settings)
@@ -50,12 +64,14 @@ async def collect_live_evidence(
 
     if settings.demo_mode and fixture is not None:
         logger.info("demo_mode_fixture_evidence", service=service)
-        return EvidenceBundle(
+        bundle = EvidenceBundle(
             commits=fixture.commits,
             log_clusters=fixture.log_clusters,
             prior_incidents=fixture.prior_incidents,
             deployments=fixture.deployments,
         )
+        set_cached_evidence(service, description, bundle.model_dump())
+        return bundle
 
     commits: list = []
     log_clusters: list = []
@@ -65,19 +81,19 @@ async def collect_live_evidence(
     tasks: dict[str, asyncio.Task] = {}
     if github_client.is_configured:
         tasks["github"] = asyncio.create_task(
-            _fetch_with_timeout(github_client.get_recent_commits(service), "github")
+            _fetch_with_circuit(github_client.get_recent_commits(service), "github")
         )
     if datadog_client.is_configured:
         tasks["datadog"] = asyncio.create_task(
-            _fetch_with_timeout(datadog_client.get_log_clusters(service), "datadog")
+            _fetch_with_circuit(datadog_client.get_log_clusters(service), "datadog")
         )
     if jira_client.is_configured:
         tasks["jira"] = asyncio.create_task(
-            _fetch_with_timeout(jira_client.get_prior_incidents(service), "jira")
+            _fetch_with_circuit(jira_client.get_prior_incidents(service), "jira")
         )
     if rts_client.is_configured:
         tasks["rts"] = asyncio.create_task(
-            _fetch_with_timeout(
+            _fetch_with_circuit(
                 rts_client.search_incident_context(
                     service, description, action_token=action_token
                 ),
@@ -88,6 +104,9 @@ async def collect_live_evidence(
     if tasks:
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         for source, result in zip(tasks.keys(), results, strict=True):
+            if isinstance(result, CircuitOpenError):
+                logger.warning("evidence_source_circuit_open", source=source, service=service)
+                continue
             if isinstance(result, Exception):
                 logger.warning(
                     "evidence_source_failed",
@@ -130,7 +149,53 @@ async def collect_live_evidence(
             "Configure GitHub and Datadog credentials or use checkout-service demo fixtures."
         )
 
+    set_cached_evidence(service, description, bundle.model_dump())
     return bundle
+
+
+async def _fetch_with_circuit(coro, source: str):
+    """
+    Await an integration coroutine behind the circuit breaker.
+
+    Args:
+        coro: Awaitable integration fetch coroutine.
+        source: Integration name for timeout and breaker messages.
+
+    Returns:
+        Result of the coroutine.
+
+    Raises:
+        CircuitOpenError: When the integration circuit is open.
+        TimeoutError: If the fetch exceeds ``INTEGRATION_FETCH_TIMEOUT_SECONDS``.
+    """
+    preflight_integration(source)
+    try:
+        result = await _fetch_with_timeout(coro, source)
+    except Exception:
+        record_integration_failure(source)
+        raise
+    record_integration_success(source)
+    return result
+
+
+async def _fetch_with_timeout(coro, source: str):
+    """
+    Await an integration coroutine with a configured timeout.
+
+    Args:
+        coro: Awaitable integration fetch coroutine.
+        source: Integration name for timeout error messages.
+
+    Returns:
+        Result of the coroutine.
+
+    Raises:
+        TimeoutError: If the fetch exceeds ``INTEGRATION_FETCH_TIMEOUT_SECONDS``.
+    """
+    try:
+        return await asyncio.wait_for(coro, timeout=INTEGRATION_FETCH_TIMEOUT_SECONDS)
+    except TimeoutError as error:
+        raise TimeoutError(f"{source} evidence fetch timed out") from error
 
 
 def _merge_prior_incidents(
@@ -154,23 +219,3 @@ def _merge_prior_incidents(
         if incident.incident_id and incident.incident_id not in merged:
             merged[incident.incident_id] = incident
     return list(merged.values())
-
-
-async def _fetch_with_timeout(coro, source: str):
-    """
-    Await an integration coroutine with a configured timeout.
-
-    Args:
-        coro: Awaitable integration fetch coroutine.
-        source: Integration name for timeout error messages.
-
-    Returns:
-        Result of the coroutine.
-
-    Raises:
-        TimeoutError: If the fetch exceeds ``INTEGRATION_FETCH_TIMEOUT_SECONDS``.
-    """
-    try:
-        return await asyncio.wait_for(coro, timeout=INTEGRATION_FETCH_TIMEOUT_SECONDS)
-    except TimeoutError as error:
-        raise TimeoutError(f"{source} evidence fetch timed out") from error

@@ -16,8 +16,20 @@ _thread: threading.Thread | None = None
 _ready = threading.Event()
 _start_lock = threading.Lock()
 
-#: Seconds to wait for a coroutine result before raising TimeoutError.
-RUN_ASYNC_TIMEOUT = 30
+from ai_incident_commander.config import get_settings
+
+#: Default seconds to wait for a coroutine result before raising TimeoutError.
+DEFAULT_RUN_ASYNC_TIMEOUT_SECONDS = 30
+
+
+def get_run_async_timeout() -> float:
+    """
+    Return the configured ``run_async`` timeout in seconds.
+
+    Returns:
+        Timeout value from settings, falling back to the module default.
+    """
+    return float(get_settings().run_async_timeout_seconds)
 
 
 def _start_loop_thread() -> asyncio.AbstractEventLoop:
@@ -63,8 +75,8 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
 
     Raises:
         RuntimeError: If called from inside a running event loop.
-        TimeoutError: If the coroutine does not complete within
-            ``RUN_ASYNC_TIMEOUT`` seconds.
+        TimeoutError: If the coroutine does not complete within the configured
+            ``RUN_ASYNC_TIMEOUT_SECONDS`` window.
     """
     try:
         asyncio.get_running_loop()
@@ -87,4 +99,4 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
     loop.call_soon_threadsafe(
         lambda: loop.create_task(_run_in_context(), context=ctx)
     )
-    return result_future.result(timeout=RUN_ASYNC_TIMEOUT)
+    return result_future.result(timeout=get_run_async_timeout())

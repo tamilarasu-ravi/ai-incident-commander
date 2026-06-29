@@ -16,7 +16,7 @@ from ai_incident_commander.slack.incident_parse import (
     build_investigation_message,
     parse_incident_trigger,
 )
-from ai_incident_commander.slack.investigation_runner import post_investigation_result
+from ai_incident_commander.slack.investigation_runner import submit_investigation
 
 logger = structlog.get_logger(__name__)
 
@@ -100,8 +100,7 @@ def _start_channel_investigation(
         thread_ts=thread_ts,
         mrkdwn=True,
     )
-    post_investigation_result(
-        client=client,
+    submit_investigation(
         channel_id=settings.incidents_channel_id,
         service=service,
         description=description,

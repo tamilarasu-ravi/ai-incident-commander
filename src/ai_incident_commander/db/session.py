@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from ai_incident_commander.config import get_settings
 from ai_incident_commander.db.models import Base
 from ai_incident_commander.db.url import resolve_database_url
 
@@ -45,9 +46,12 @@ def create_async_engine_from_url(database_url: str) -> AsyncEngine:
         Configured ``AsyncEngine`` instance.
     """
     resolved = resolve_database_url(database_url)
+    settings = get_settings()
     return create_async_engine(
         normalize_async_database_url(resolved),
         pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
     )
 
 

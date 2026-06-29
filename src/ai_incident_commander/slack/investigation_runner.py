@@ -1,15 +1,27 @@
 """Shared helpers for running investigations and posting Slack results."""
 
+from __future__ import annotations
+
 import os
+import threading
 
 import structlog
 from slack_sdk import WebClient
 
 from ai_incident_commander.agents.graph import run_investigation
+from ai_incident_commander.config import Settings, get_settings
 from ai_incident_commander.db.async_bridge import run_async
-from ai_incident_commander.config import Settings
-from ai_incident_commander.slack.action_token_store import get_action_token, get_most_recent_action_token
 from ai_incident_commander.models.investigation import InvestigationState
+from ai_incident_commander.models.investigation_job import (
+    InvestigationJob,
+    derive_investigation_id,
+)
+from ai_incident_commander.ops.investigation_queue import enqueue_investigation
+from ai_incident_commander.slack.action_token_store import (
+    get_action_token,
+    get_most_recent_action_token,
+)
+from ai_incident_commander.slack.client import create_slack_web_client
 from ai_incident_commander.slack.views.approval import (
     build_blocked_message_text,
     build_error_message_text,
@@ -36,6 +48,95 @@ def _extract_message_ts(response: object | None) -> str | None:
     return str(nested_ts) if nested_ts else None
 
 
+def execute_investigation_job(job: InvestigationJob, settings: Settings | None = None) -> None:
+    """
+    Execute a queued investigation job and post results to Slack.
+
+    Args:
+        job: Investigation work item from the queue.
+        settings: Optional settings override; defaults to cached settings.
+    """
+    resolved_settings = settings or get_settings()
+    if not resolved_settings.slack_bot_token:
+        logger.error("investigation_job_missing_slack_token", investigation_id=job.investigation_id)
+        return
+
+    client = create_slack_web_client(resolved_settings.slack_bot_token)
+    post_investigation_result(
+        client=client,
+        channel_id=job.channel_id,
+        service=job.service,
+        description=job.description,
+        settings=resolved_settings,
+        action_token=job.action_token,
+        assistant_thread=job.assistant_thread,
+        investigation_id=job.investigation_id,
+    )
+
+
+def submit_investigation(
+    *,
+    channel_id: str,
+    service: str,
+    description: str,
+    settings: Settings | None = None,
+    action_token: str | None = None,
+    assistant_thread: tuple[str, str] | None = None,
+    idempotency_key: str | None = None,
+) -> str:
+    """
+    Queue an investigation for asynchronous execution.
+
+    Falls back to a background thread when the investigation workers are not
+    started (for example in unit tests).
+
+    Args:
+        channel_id: Slack channel ID for surfacing results.
+        service: Affected service name.
+        description: Incident description.
+        settings: Application settings for LLM and integrations.
+        action_token: Optional Slack RTS action token.
+        assistant_thread: Optional Assistant thread coordinates.
+        idempotency_key: Optional stable external key for deduplicated IDs.
+
+    Returns:
+        Investigation ID assigned to the queued or running job.
+    """
+    resolved_settings = settings or get_settings()
+    investigation_id = derive_investigation_id(idempotency_key)
+
+    try:
+        return enqueue_investigation(
+            service=service,
+            description=description,
+            channel_id=channel_id,
+            idempotency_key=idempotency_key,
+            action_token=action_token,
+            assistant_thread=assistant_thread,
+            investigation_id=investigation_id,
+        )
+    except RuntimeError:
+        thread = threading.Thread(
+            target=execute_investigation_job,
+            args=(
+                InvestigationJob(
+                    investigation_id=investigation_id,
+                    service=service,
+                    description=description,
+                    channel_id=channel_id,
+                    idempotency_key=idempotency_key,
+                    action_token=action_token,
+                    assistant_thread=assistant_thread,
+                ),
+                resolved_settings,
+            ),
+            name=f"investigation-{service}",
+            daemon=True,
+        )
+        thread.start()
+        return investigation_id
+
+
 def post_investigation_result(
     client: WebClient,
     channel_id: str,
@@ -44,6 +145,7 @@ def post_investigation_result(
     settings: Settings,
     action_token: str | None = None,
     assistant_thread: tuple[str, str] | None = None,
+    investigation_id: str | None = None,
 ) -> InvestigationState | None:
     """
     Run the investigation graph and post the resulting Slack message.
@@ -56,6 +158,7 @@ def post_investigation_result(
         settings: Application settings for LLM and integrations.
         action_token: Optional RTS token from an Assistant thread (enables primary RTS path).
         assistant_thread: Optional ``(channel_id, thread_ts)`` for Assistant follow-up.
+        investigation_id: Optional stable investigation ID for idempotent runs.
 
     Returns:
         Final investigation state when the graph completes, otherwise ``None``.
@@ -75,6 +178,7 @@ def post_investigation_result(
                 description=description,
                 settings=settings,
                 action_token=resolved_token,
+                investigation_id=investigation_id,
             )
         )
     except Exception:
@@ -105,19 +209,19 @@ def post_investigation_result(
         return final_state
 
     if status == "surfaced":
-        investigation_id = final_state.get("investigation_id")
+        resolved_investigation_id = final_state.get("investigation_id")
         store = get_investigation_store()
 
-        if investigation_id:
+        if resolved_investigation_id:
             store.save(
-                investigation_id=investigation_id,
+                investigation_id=resolved_investigation_id,
                 state=final_state,
                 channel_id=channel_id,
                 message_ts="",
             )
             log.info(
                 "investigation_saved_for_actions",
-                investigation_id=investigation_id,
+                investigation_id=resolved_investigation_id,
                 stored_count=store.count(),
                 message_ts_pending=True,
                 pid=os.getpid(),
@@ -133,21 +237,26 @@ def post_investigation_result(
             ),
         )
         message_ts = _extract_message_ts(response)
-        if investigation_id and message_ts:
-            store.update_message_ts(investigation_id, message_ts)
+        if resolved_investigation_id and message_ts:
+            store.update_message_ts(resolved_investigation_id, message_ts)
             log.info(
                 "investigation_message_ts_saved",
-                investigation_id=investigation_id,
+                investigation_id=resolved_investigation_id,
                 message_ts=message_ts,
             )
-        elif investigation_id:
+        elif resolved_investigation_id:
             log.warning(
                 "investigation_message_ts_missing",
-                investigation_id=investigation_id,
+                investigation_id=resolved_investigation_id,
                 response_type=type(response).__name__,
             )
 
-        log.info("investigation_surfaced", investigation_id=investigation_id, status=status, pid=os.getpid())
+        log.info(
+            "investigation_surfaced",
+            investigation_id=resolved_investigation_id,
+            status=status,
+            pid=os.getpid(),
+        )
         _post_assistant_follow_up(client, assistant_thread, final_state, channel_id)
         return final_state
 

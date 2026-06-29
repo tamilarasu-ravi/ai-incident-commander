@@ -174,6 +174,10 @@ async def synthesize_rca_hypothesis(
             service=service,
         )
     except Exception as error:
+        if is_rate_limit_error(error):
+            from ai_incident_commander.ops.metrics import record_llm_rate_limit_error
+
+            record_llm_rate_limit_error()
         log.error("rca_synthesis_failed", error=str(error))
         raise
 
@@ -230,6 +234,10 @@ async def validate_rca_grounding(
             service=rca.affected_service,
         )
     except Exception as error:
+        from ai_incident_commander.ops.metrics import is_rate_limit_error, record_llm_rate_limit_error
+
+        if is_rate_limit_error(error):
+            record_llm_rate_limit_error()
         log.error("grounding_validation_failed", error=str(error))
         raise
 

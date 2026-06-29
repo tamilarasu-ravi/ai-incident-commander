@@ -13,5 +13,8 @@ def test_health_returns_ok() -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["db"] in {"pickle", "postgresql"}
-    assert body["socket_mode"] in {"not_configured", "connected", "disconnected"}
+    assert body["socket_mode"] in {"not_configured", "connected", "disconnected", "disabled"}
     assert body["pagerduty"] in {"configured", "not_configured"}
+    assert "queue" in body
+    assert "metrics" in body
+    assert "circuit_breakers" in body
