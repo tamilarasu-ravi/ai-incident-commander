@@ -15,8 +15,9 @@ from ai_incident_commander.slack.client import (
     create_slack_web_client,
     create_socket_mode_web_client,
 )
-from ai_incident_commander.slack.action_token_store import set_action_token
 from ai_incident_commander.slack.handlers.actions import register_action_handlers
+from ai_incident_commander.slack.handlers.assistant import register_assistant_handlers
+from ai_incident_commander.slack.handlers.messages import register_message_handlers
 from ai_incident_commander.slack.handlers.slash import register_slash_handlers
 from ai_incident_commander.slack.tokens import validate_slack_tokens
 
@@ -75,48 +76,9 @@ def create_slack_app(settings: Settings | None = None) -> App:
     )
     register_slash_handlers(app, resolved)
     register_action_handlers(app, resolved)
-    _register_assistant_event_handlers(app)
+    register_assistant_handlers(app, resolved)
+    register_message_handlers(app, resolved)
     return app
-
-
-def _register_assistant_event_handlers(app: App) -> None:
-    """
-    Register handlers for Slack assistant thread events.
-
-    These events carry a short-lived ``action_token`` that enables the
-    primary RTS ``assistant.search.context`` path. Tokens are cached by
-    channel ID in ``action_token_store`` for use during evidence collection.
-
-    Args:
-        app: Configured Bolt application instance.
-    """
-
-    @app.event("assistant_thread_started")
-    def handle_assistant_thread_started(event: dict, logger) -> None:  # noqa: ANN001
-        thread = event.get("assistant_thread") or {}
-        context = thread.get("context") or {}
-        channel_id = context.get("channel_id") or thread.get("channel_id") or ""
-        action_token = context.get("action_token") or ""
-        if channel_id and action_token:
-            set_action_token(channel_id, action_token)
-            logger.debug(
-                "action_token_cached",
-                event="assistant_thread_started",
-                channel_id=channel_id,
-            )
-
-    @app.event("assistant_thread_context_changed")
-    def handle_assistant_thread_context_changed(event: dict, logger) -> None:  # noqa: ANN001
-        context = event.get("assistant_thread_context") or {}
-        channel_id = context.get("channel_id") or ""
-        action_token = context.get("action_token") or ""
-        if channel_id and action_token:
-            set_action_token(channel_id, action_token)
-            logger.debug(
-                "action_token_refreshed",
-                event="assistant_thread_context_changed",
-                channel_id=channel_id,
-            )
 
 
 def _is_pytest_running() -> bool:
@@ -198,7 +160,10 @@ def _connect_socket_mode_loop(settings: Settings) -> None:
                 "slack_socket_ready",
                 session_id=session_id,
                 pid=os.getpid(),
-                hint="Safe to run /incident now — slash + buttons must hit this pid",
+                hint=(
+                    "Safe to demo now: Assistant panel, #incidents message, "
+                    "/incident, or @mention — all must hit this pid"
+                ),
             )
             return
         except Exception as error:

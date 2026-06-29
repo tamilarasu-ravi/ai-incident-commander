@@ -16,6 +16,7 @@ from collections import OrderedDict
 
 _lock = threading.Lock()
 _tokens: OrderedDict[str, str] = OrderedDict()
+_latest_token: str | None = None
 _MAX_TOKENS = 200
 
 
@@ -30,7 +31,9 @@ def set_action_token(channel_id: str, action_token: str) -> None:
     if not channel_id or not action_token:
         return
     with _lock:
+        global _latest_token
         _tokens[channel_id] = action_token
+        _latest_token = action_token
         while len(_tokens) > _MAX_TOKENS:
             _tokens.popitem(last=False)
 
@@ -49,7 +52,20 @@ def get_action_token(channel_id: str) -> str | None:
         return _tokens.get(channel_id)
 
 
+def get_most_recent_action_token() -> str | None:
+    """
+    Return the most recently cached RTS action token, regardless of channel.
+
+    Returns:
+        Latest action token from an Assistant thread event, or ``None``.
+    """
+    with _lock:
+        return _latest_token
+
+
 def clear() -> None:
     """Remove all cached tokens (used in tests)."""
+    global _latest_token
     with _lock:
         _tokens.clear()
+        _latest_token = None

@@ -8,7 +8,7 @@ from slack_sdk import WebClient
 from ai_incident_commander.agents.graph import run_investigation
 from ai_incident_commander.db.async_bridge import run_async
 from ai_incident_commander.config import Settings
-from ai_incident_commander.slack.action_token_store import get_action_token
+from ai_incident_commander.slack.action_token_store import get_action_token, get_most_recent_action_token
 from ai_incident_commander.models.investigation import InvestigationState
 from ai_incident_commander.slack.views.approval import (
     build_blocked_message_text,
@@ -42,6 +42,8 @@ def post_investigation_result(
     service: str,
     description: str,
     settings: Settings,
+    action_token: str | None = None,
+    assistant_thread: tuple[str, str] | None = None,
 ) -> InvestigationState | None:
     """
     Run the investigation graph and post the resulting Slack message.
@@ -52,21 +54,27 @@ def post_investigation_result(
         service: Affected service name.
         description: Incident description.
         settings: Application settings for LLM and integrations.
+        action_token: Optional RTS token from an Assistant thread (enables primary RTS path).
+        assistant_thread: Optional ``(channel_id, thread_ts)`` for Assistant follow-up.
 
     Returns:
         Final investigation state when the graph completes, otherwise ``None``.
     """
     log = logger.bind(service=service, pid=os.getpid())
-    log.info("investigation_started")
+    log.info("investigation_started", rts_token_provided=bool(action_token))
 
     try:
-        action_token = get_action_token(channel_id)
+        resolved_token = (
+            action_token
+            or get_action_token(channel_id)
+            or get_most_recent_action_token()
+        )
         final_state = run_async(
             run_investigation(
                 service=service,
                 description=description,
                 settings=settings,
-                action_token=action_token,
+                action_token=resolved_token,
             )
         )
     except Exception:
@@ -93,6 +101,7 @@ def post_investigation_result(
             channel=channel_id,
             text=build_blocked_message_text(final_state),
         )
+        _post_assistant_follow_up(client, assistant_thread, final_state, channel_id)
         return final_state
 
     if status == "surfaced":
@@ -139,6 +148,7 @@ def post_investigation_result(
             )
 
         log.info("investigation_surfaced", investigation_id=investigation_id, status=status, pid=os.getpid())
+        _post_assistant_follow_up(client, assistant_thread, final_state, channel_id)
         return final_state
 
     client.chat_postMessage(
@@ -149,3 +159,61 @@ def post_investigation_result(
         ),
     )
     return final_state
+
+
+def _post_assistant_follow_up(
+    client: WebClient,
+    assistant_thread: tuple[str, str] | None,
+    state: InvestigationState,
+    incidents_channel_id: str,
+) -> None:
+    """
+    Post a short investigation summary back to the Assistant thread.
+
+    Args:
+        client: Slack Web API client.
+        assistant_thread: ``(channel_id, thread_ts)`` when triggered from Assistant.
+        state: Final investigation state after the graph completes.
+        incidents_channel_id: Channel where the full RCA card was posted.
+    """
+    if assistant_thread is None:
+        return
+
+    assistant_channel_id, thread_ts = assistant_thread
+    if not assistant_channel_id or not thread_ts:
+        return
+
+    status = state.get("status")
+    eval_result = state.get("eval_result")
+    service = state.get("service", "service")
+
+    if status == "surfaced" and eval_result is not None:
+        confidence_pct = int(round(eval_result.confidence * 100))
+        text = (
+            f":white_check_mark: Investigation complete for `{service}` — "
+            f"confidence *{confidence_pct}%*. "
+            f"Review the approval card in <#{incidents_channel_id}>."
+        )
+    elif status == "blocked":
+        reason = state.get("block_reason") or (
+            eval_result.block_reason if eval_result else "Investigation blocked."
+        )
+        text = (
+            f":no_entry: Investigation blocked for `{service}`: {reason}\n"
+            f"Details posted in <#{incidents_channel_id}>."
+        )
+    else:
+        return
+
+    try:
+        client.chat_postMessage(
+            channel=assistant_channel_id,
+            thread_ts=thread_ts,
+            text=text,
+        )
+    except Exception:
+        logger.warning(
+            "assistant_follow_up_failed",
+            assistant_channel_id=assistant_channel_id,
+            thread_ts=thread_ts,
+        )

@@ -2,7 +2,7 @@
 
 import pytest
 
-from ai_incident_commander.slack.handlers.slash import (
+from ai_incident_commander.slack.incident_parse import (
     IncidentCommandParseError,
     build_investigation_message,
     parse_incident_command,

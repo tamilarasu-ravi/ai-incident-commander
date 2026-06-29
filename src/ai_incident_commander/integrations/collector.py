@@ -48,6 +48,15 @@ async def collect_live_evidence(
     rts_client = RtsClient(settings, slack_client=slack_client)
     fixture = get_fixture_evidence(service)
 
+    if settings.demo_mode and fixture is not None:
+        logger.info("demo_mode_fixture_evidence", service=service)
+        return EvidenceBundle(
+            commits=fixture.commits,
+            log_clusters=fixture.log_clusters,
+            prior_incidents=fixture.prior_incidents,
+            deployments=fixture.deployments,
+        )
+
     commits: list = []
     log_clusters: list = []
     prior_incidents: list[PriorIncidentEvidence] = []

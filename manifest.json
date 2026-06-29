@@ -4,7 +4,12 @@
     "description": "AI-powered RCA investigation agent for production incidents",
     "background_color": "#1a1a2e"
   },
-  "features": {
+    "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
     "bot_user": {
       "display_name": "Incident Commander",
       "always_online": true
@@ -14,15 +19,15 @@
       "suggested_prompts": [
         {
           "title": "Redis pool exhaustion",
-          "message": "/incident checkout-service latency spike"
+          "message": "checkout-service latency spike"
         },
         {
           "title": "Null deploy regression",
-          "message": "/incident payment-service null deploy regression"
+          "message": "payment-service null deploy regression"
         },
         {
           "title": "Flaky test false alarm",
-          "message": "/incident auth-service flaky integration test failure"
+          "message": "auth-service flaky integration test failure"
         }
       ]
     },
@@ -38,6 +43,7 @@
   "oauth_config": {
     "scopes": {
       "bot": [
+        "app_mentions:read",
         "channels:history",
         "channels:read",
         "chat:write",
@@ -46,7 +52,9 @@
         "groups:history",
         "groups:read",
         "assistant:write",
-        "search:read.public"
+        "search:read.public",
+        "im:history",
+        "im:read"
       ]
     }
   },
@@ -54,7 +62,10 @@
     "event_subscriptions": {
       "bot_events": [
         "assistant_thread_started",
-        "assistant_thread_context_changed"
+        "assistant_thread_context_changed",
+        "message.im",
+        "message.channels",
+        "app_mention"
       ]
     },
     "interactivity": {

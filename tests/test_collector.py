@@ -158,3 +158,31 @@ async def test_collect_live_evidence_raises_for_unknown_service(make_settings) -
     ):
         with pytest.raises(ValueError, match="No evidence collected"):
             await collect_live_evidence("unknown-service", "something broke", settings)
+
+
+async def test_collect_live_evidence_demo_mode_uses_fixture_only(make_settings) -> None:
+    """Demo mode returns fixture evidence without merging live integration data."""
+    settings = make_settings(
+        github_token=TEST_GITHUB_TOKEN,
+        github_repo_owner="acme",
+        github_repo_name="checkout-service",
+        datadog_api_key=TEST_DATADOG_API_KEY,
+        datadog_app_key=TEST_DATADOG_APP_KEY,
+        demo_mode=True,
+    )
+    live_commits = [
+        CommitEvidence(sha="live01", message="live commit", author="dev@example.com", age_minutes=5)
+    ]
+
+    with patch(
+        "ai_incident_commander.integrations.collector.GitHubClient.get_recent_commits",
+        AsyncMock(return_value=live_commits),
+    ):
+        bundle = await collect_live_evidence(
+            DEMO_SERVICE_NAME,
+            "latency spike",
+            settings,
+        )
+
+    assert bundle.commits[0].sha == "abc123"
+    assert "Redis connection pool exhausted" in bundle.log_clusters[0].message

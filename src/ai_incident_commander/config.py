@@ -83,6 +83,7 @@ class Settings(BaseSettings):
         default="",
         validation_alias="PAGERDUTY_DEDUP_FILE",
     )
+    demo_mode: bool = Field(default=False, validation_alias="DEMO_MODE")
 
     @property
     def is_github_configured(self) -> bool:

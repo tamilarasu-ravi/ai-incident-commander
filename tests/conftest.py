@@ -51,6 +51,7 @@ def make_settings():
             "google_grounding_model": "",
             "log_level": "info",
             "pagerduty_webhook_secret": "",
+            "demo_mode": False,
         }
         base.update(overrides)
         return Settings.model_construct(**base)

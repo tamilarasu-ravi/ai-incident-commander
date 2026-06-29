@@ -20,9 +20,9 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 - [x] **Day 4:** Jira + Real-Time Search API live
 - [x] **Day 5:** Full eval engine; all three test scenarios passing (`pytest`)
 - [x] **Day 6:** PagerDuty webhook + Block Kit approval actions
-- [ ] **Day 7:** Demo video recorded; judge sandbox access granted
+- [ ] **Day 7:** Demo video recorded; judge sandbox access granted — see [`docs/HACKATHON_SUBMISSION.md`](docs/HACKATHON_SUBMISSION.md)
 
-**Hackathon build note:** Investigation state defaults to a **JSON file** on disk (`.investigation_store.json`) so Approve/Reject survive process restarts without PostgreSQL. Set `DATABASE_URL` to use PostgreSQL persistence (Alembic migrations in `alembic/versions/`). Deployments in evidence are still fixture-backed for demo reliability.
+**Hackathon build note:** Investigation state defaults to a **JSON file** on disk (`.investigation_store.json`) so Approve/Reject survive process restarts without PostgreSQL. Set `DATABASE_URL` to use PostgreSQL persistence (Alembic migrations in `alembic/versions/`). Set `DEMO_MODE=true` in `.env` for predictable hackathon demos.
 
 ---
 
@@ -30,19 +30,29 @@ Most incident bots create a ticket. This one tells you _why_ before it does.
 
 > 📹 [3-minute demo video — link here]
 
+**Recommended demo path (Assistant-first — shows Slack AI + RTS):**
+
+1. Open **Incident Commander** in the Slack **Assistant** panel (sidebar).
+2. Click **Redis pool exhaustion** or type `checkout-service latency spike`.
+3. Watch Assistant loading status → RCA card in `#incidents` → Approve.
+
+**Fallback:** `/incident checkout-service latency spike` (slash command; RTS uses cached token if Assistant was opened recently).
+
+Set `DEMO_MODE=true` in `.env` before recording or judging. Full checklist: [`docs/HACKATHON_SUBMISSION.md`](docs/HACKATHON_SUBMISSION.md).
+
 **Demo service names** (fixture-backed scenarios with predictable outcomes):
 
-| Service | Command example | Expected outcome |
-| ------- | ---------------- | ---------------- |
-| `checkout-service` | `/incident checkout-service "latency spike"` | RCA surfaced (~87% confidence) |
-| `payment-service` | `/incident payment-service "null deploy regression"` | Blocked by Eval 1 (low coverage) |
-| `auth-service` | `/incident auth-service "flaky integration test failure"` | Blocked by false-alarm guard |
+| Service | Assistant / slash example | Expected outcome |
+| ------- | ------------------------- | ---------------- |
+| `checkout-service` | `checkout-service latency spike` | RCA surfaced (~87% confidence) |
+| `payment-service` | `payment-service null deploy regression` | Blocked by Eval 1 (low coverage) |
+| `auth-service` | `auth-service flaky integration test failure` | Blocked by false-alarm guard |
 
 Other service names return an error unless live GitHub/Datadog evidence is configured. Stick to the three names above for judging and recording.
 
 ```
-PagerDuty webhook  ──or──  /incident checkout-service "latency spike"
-       │                        │ (manual escalation / live demo)
+Assistant prompt / suggested prompt  ──or──  /incident checkout-service latency spike
+       │                        │ (PagerDuty webhook also supported)
        └────────────────────────┘
                     │
                     ▼
@@ -620,8 +630,11 @@ ai-incident-commander/
 
 ## Hackathon Submission
 
+See **[`docs/HACKATHON_SUBMISSION.md`](docs/HACKATHON_SUBMISSION.md)** for the full checklist (video, judge invites, manifest reinstall).
+
 - **Track:** New Slack Agent
-- **Sandbox:** https://ai-incident-commander.slack.com _(update with your workspace URL)_
+- **Agent Builder alignment:** [`docs/AGENT_BUILDER.md`](docs/AGENT_BUILDER.md)
+- **Sandbox:** https://YOUR-WORKSPACE.slack.com _(update with your workspace URL)_
 - **Judge access:** `slackhack@salesforce.com` and `testing@devpost.com` invited to the sandbox workspace
 - **Demo video:** [YouTube/Loom link] (~3 minutes, working project footage required)
 - **Architecture diagram:** See [Architecture](#architecture) above (export a visual version for Devpost if needed)
@@ -636,11 +649,11 @@ ai-incident-commander/
 | Time | Beat |
 | ---- | ---- |
 | 0:00–0:30 | Problem: alert fires, engineer opens 4 tabs, RCA takes 45+ minutes |
-| 0:30–1:00 | Trigger `/incident` in Slack; agent announces investigation |
-| 1:00–1:45 | Evidence appears (commits, logs, prior incident via RTS) |
+| 0:30–1:00 | Open **Assistant** → trigger `checkout-service latency spike` |
+| 1:00–1:45 | Evidence (MCP commits, logs, prior incident via **RTS**) |
 | 1:45–2:15 | RCA card with confidence breakdown |
-| 2:15–2:45 | Second run: flaky scenario → false-alarm guard blocks before human review |
-| 2:45–3:00 | Approve → Jira ticket; closing line on human-in-the-loop |
+| 2:15–2:45 | Assistant: flaky scenario → false-alarm guard blocks |
+| 2:45–3:00 | Approve → Jira ticket; human-in-the-loop closing |
 
 Record in your sandbox workspace, not localhost-only.
 

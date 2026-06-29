@@ -9,70 +9,15 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from ai_incident_commander.config import Settings
-from ai_incident_commander.constants import (
-    INCIDENT_SLASH_COMMAND,
-    INCIDENT_USAGE_HINT,
-    INVESTIGATION_ANNOUNCEMENT_TEMPLATE,
+from ai_incident_commander.constants import INCIDENT_SLASH_COMMAND
+from ai_incident_commander.slack.incident_parse import (
+    IncidentCommandParseError,
+    build_investigation_message,
+    parse_incident_command,
 )
 from ai_incident_commander.slack.investigation_runner import post_investigation_result
 
 logger = structlog.get_logger(__name__)
-
-
-class IncidentCommandParseError(ValueError):
-    """Raised when `/incident` command text is missing required parts."""
-
-
-def parse_incident_command(text: str) -> tuple[str, str]:
-    """
-    Parse slash command text into a service name and incident description.
-
-    Args:
-        text: Payload text after the command name (e.g. ``checkout-service latency spike``).
-
-    Returns:
-        Tuple of ``(service, description)``.
-
-    Raises:
-        IncidentCommandParseError: If either service or description is missing.
-    """
-    normalized = text.strip()
-    if not normalized:
-        raise IncidentCommandParseError(
-            f"Missing arguments. Usage: {INCIDENT_USAGE_HINT}"
-        )
-
-    parts = normalized.split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        raise IncidentCommandParseError(
-            f"Description is required. Usage: {INCIDENT_USAGE_HINT}"
-        )
-
-    service = parts[0].strip()
-    description = parts[1].strip()
-    if not service:
-        raise IncidentCommandParseError(
-            f"Service name is required. Usage: {INCIDENT_USAGE_HINT}"
-        )
-
-    return service, description
-
-
-def build_investigation_message(service: str, description: str) -> str:
-    """
-    Build the announcement message posted to the incidents channel.
-
-    Args:
-        service: Affected service name from the slash command.
-        description: Free-text incident description from the slash command.
-
-    Returns:
-        Slack mrkdwn-formatted investigation announcement.
-    """
-    return INVESTIGATION_ANNOUNCEMENT_TEMPLATE.format(
-        service=service,
-        description=description,
-    )
 
 
 def _post_investigation_result(
@@ -190,6 +135,7 @@ def register_slash_handlers(app: App, settings: Settings) -> None:
             response_type="ephemeral",
             text=(
                 f"Investigation started in <#{settings.incidents_channel_id}>. "
-                "RCA card will appear when analysis completes."
+                "RCA card will appear when analysis completes.\n\n"
+                "_Tip: open the Incident Commander Assistant for Real-Time Search._"
             ),
         )
